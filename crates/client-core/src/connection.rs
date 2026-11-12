@@ -76,10 +76,19 @@ pub fn spawn_connection(
     auth: AuthToken,
     nickname: String,
 ) -> ConnectionHandle {
+    spawn_connection_at(addr, auth, nickname, Instant::now())
+}
+
+/// Like [`spawn_connection`], with the local time base shared with the caller.
+pub fn spawn_connection_at(
+    addr: ServerAddress,
+    auth: AuthToken,
+    nickname: String,
+    epoch: Instant,
+) -> ConnectionHandle {
     let (tx, out_rx) = mpsc::unbounded_channel();
     let (ev_tx, events) = mpsc::unbounded_channel();
     let clock = Arc::new(Mutex::new(ClockEstimator::new()));
-    let epoch = Instant::now();
     let ctx =
         Ctx { addr, auth, nickname, out_rx, ev_tx, clock: clock.clone(), epoch, session: None };
     tokio::spawn(ctx.run());
