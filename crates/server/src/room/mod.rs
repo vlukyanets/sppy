@@ -3,17 +3,19 @@
 mod participants;
 mod permissions;
 mod playback;
+mod playlist;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use sppy_proto::{
-    ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, Item, NoticeAction,
-    Participant, ParticipantId, PlaybackState, ReqId, RoomId, RoomSettings, RoomState, ServerMsg,
-    Welcome,
+    ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, FileId, Item, MediaStatus,
+    NoticeAction, Participant, ParticipantId, PlaybackState, ReqId, RoomId, RoomSettings,
+    RoomState, ServerMsg, Welcome,
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
 use playback::PlaybackCmd;
+pub use playlist::FileInfo;
 
 /// Static room configuration, derived from the server config.
 #[derive(Debug, Clone)]
@@ -55,6 +57,8 @@ pub struct Room {
     next_participant_id: u64,
     control_mode: ControlMode,
     playlist: Vec<Item>,
+    next_item_id: u64,
+    catalog: HashMap<FileId, FileInfo>,
     playback: PlaybackState,
     chat: VecDeque<ChatMessage>,
 }
@@ -67,6 +71,8 @@ impl Room {
             next_participant_id: 1,
             control_mode: ControlMode::Everyone,
             playlist: Vec::new(),
+            next_item_id: 1,
+            catalog: HashMap::new(),
             playback: PlaybackState {
                 item_id: None,
                 position_ms: 0,
@@ -130,6 +136,22 @@ impl Room {
             ClientMsg::SetSpeed { req_id, speed } => {
                 self.playback_command(now_ms, pid, req_id, PlaybackCmd::SetSpeed(speed))
             }
+            ClientMsg::PlaylistAdd {
+                req_id,
+                sources,
+                after,
+            } => self.playlist_add(now_ms, pid, req_id, sources, after),
+            ClientMsg::PlaylistRemove { req_id, item_id } => {
+                self.playlist_remove(now_ms, pid, req_id, item_id)
+            }
+            ClientMsg::PlaylistMove {
+                req_id,
+                item_id,
+                after,
+            } => self.playlist_move(pid, req_id, item_id, after),
+            ClientMsg::PlaylistSelect { req_id, item_id } => {
+                self.playlist_select(now_ms, pid, req_id, item_id)
+            }
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
             ClientMsg::SetCanControl {
                 req_id,
@@ -164,6 +186,24 @@ impl Room {
             },
         ]
     }
+
+    /// Participants who can block the room: connected, player open, not failed.
+    fn active_ids(&self) -> Vec<ParticipantId> {
+        self.members
+            .iter()
+            .filter(|m| {
+                m.info.connected
+                    && !matches!(
+                        m.info.status,
+                        MediaStatus::PlayerClosed | MediaStatus::Failed { .. }
+                    )
+            })
+            .map(|m| m.info.id)
+            .collect()
+    }
+
+    /// Hook for per-item state that must reset on item change (extended later).
+    fn on_item_changed(&mut self) {}
 
     fn current_item(&self) -> Option<&Item> {
         let id = self.playback.item_id?;
@@ -204,6 +244,11 @@ impl Room {
         Effect::Broadcast {
             msg: ServerMsg::Event(Event::Notice { actor, action }),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_status(&mut self, pid: ParticipantId, status: MediaStatus) {
+        self.member_mut(pid).unwrap().info.status = status;
     }
 
     #[cfg(test)]

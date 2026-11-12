@@ -686,3 +686,345 @@ mod playback {
         assert!(!r.playback().is_playing());
     }
 }
+
+pub(super) fn file_info(id: &str) -> FileInfo {
+    FileInfo {
+        file_id: FileId(id.into()),
+        title: format!("{id}.mkv"),
+        fingerprint: None,
+        subtitles: vec![],
+    }
+}
+
+pub(super) fn file_src(id: &str) -> Source {
+    Source::File {
+        file_id: FileId(id.into()),
+    }
+}
+
+pub(super) fn add(
+    r: &mut Room,
+    now: u64,
+    pid: ParticipantId,
+    sources: Vec<Source>,
+    after: Option<ItemId>,
+) -> Vec<Effect> {
+    r.command(
+        now,
+        pid,
+        ClientMsg::PlaylistAdd {
+            req_id: 100,
+            sources,
+            after,
+        },
+    )
+}
+
+pub(super) fn playlist_ids(r: &Room) -> Vec<u64> {
+    r.state().playlist.iter().map(|i| i.item_id.0).collect()
+}
+
+mod playlist {
+    use super::*;
+
+    fn setup() -> (Room, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        r.set_library(0, vec![file_info("a"), file_info("b"), file_info("c")]);
+        (r, h)
+    }
+
+    #[test]
+    fn add_unknown_file_denied() {
+        let (mut r, h) = setup();
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistAdd {
+                req_id: 1,
+                sources: vec![file_src("zzz")],
+                after: None,
+            },
+        );
+        assert_denied(&effects, h, 1, ErrorCode::UnknownFile);
+        assert!(playlist_ids(&r).is_empty());
+    }
+
+    #[test]
+    fn add_to_empty_makes_current_paused() {
+        let (mut r, h) = setup();
+        let effects = add(&mut r, 0, h, vec![file_src("a")], None);
+        let p = r.playback();
+        assert_eq!(p.item_id, Some(ItemId(1)));
+        assert!(p.paused);
+        assert_eq!(p.position_ms, 0);
+        assert_eq!(p.hold.as_ref().unwrap().reason, HoldReason::ItemStart);
+        let item = &r.state().playlist[0];
+        assert_eq!(item.title, "a.mkv");
+        assert_eq!(item.added_by, h);
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::PlaylistAdded {
+                item_ids: vec![ItemId(1)]
+            }));
+        assert!(effects.contains(&Effect::Persist));
+    }
+
+    #[test]
+    fn add_url_uses_url_as_title() {
+        let (mut r, h) = setup();
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url {
+                url: "https://x/y".into(),
+            }],
+            None,
+        );
+        assert_eq!(r.state().playlist[0].title, "https://x/y");
+    }
+
+    #[test]
+    fn add_after_and_at_start() {
+        let (mut r, h) = setup();
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None); // [1, 2]
+        add(&mut r, 0, h, vec![file_src("c")], Some(ItemId(1))); // [1, 3, 2]
+        assert_eq!(playlist_ids(&r), vec![1, 3, 2]);
+        add(&mut r, 0, h, vec![file_src("c")], None); // at start
+        assert_eq!(playlist_ids(&r), vec![4, 1, 3, 2]);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistAdd {
+                req_id: 9,
+                sources: vec![file_src("a")],
+                after: Some(ItemId(77)),
+            },
+        );
+        assert_denied(&effects, h, 9, ErrorCode::UnknownItem);
+    }
+
+    #[test]
+    fn move_item() {
+        let (mut r, h) = setup();
+        add(
+            &mut r,
+            0,
+            h,
+            vec![file_src("a"), file_src("b"), file_src("c")],
+            None,
+        ); // [1,2,3]
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistMove {
+                req_id: 1,
+                item_id: ItemId(3),
+                after: None,
+            },
+        );
+        assert_eq!(playlist_ids(&r), vec![3, 1, 2]);
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::PlaylistMoved { item_id: ItemId(3) }));
+        r.command(
+            0,
+            h,
+            ClientMsg::PlaylistMove {
+                req_id: 2,
+                item_id: ItemId(3),
+                after: Some(ItemId(2)),
+            },
+        );
+        assert_eq!(playlist_ids(&r), vec![1, 2, 3]);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistMove {
+                req_id: 3,
+                item_id: ItemId(2),
+                after: Some(ItemId(2)),
+            },
+        );
+        assert_denied(&effects, h, 3, ErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn remove_non_current() {
+        let (mut r, h) = setup();
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistRemove {
+                req_id: 1,
+                item_id: ItemId(2),
+            },
+        );
+        assert_eq!(playlist_ids(&r), vec![1]);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::PlaylistRemoved { item_id: ItemId(2) }));
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistRemove {
+                req_id: 2,
+                item_id: ItemId(2),
+            },
+        );
+        assert_denied(&effects, h, 2, ErrorCode::UnknownItem);
+    }
+
+    #[test]
+    fn remove_current_advances() {
+        let (mut r, h) = setup();
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None);
+        let effects = r.command(
+            500,
+            h,
+            ClientMsg::PlaylistRemove {
+                req_id: 1,
+                item_id: ItemId(1),
+            },
+        );
+        let p = r.playback();
+        assert_eq!(p.item_id, Some(ItemId(2)));
+        assert_eq!(p.position_ms, 0);
+        assert!(!p.paused);
+        assert_eq!(p.hold.as_ref().unwrap().reason, HoldReason::ItemStart);
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::ItemChanged { item_id: ItemId(2) }));
+        r.command(
+            600,
+            h,
+            ClientMsg::PlaylistRemove {
+                req_id: 2,
+                item_id: ItemId(2),
+            },
+        );
+        assert_eq!(r.playback().item_id, None);
+    }
+
+    #[test]
+    fn select_resets_statuses_and_holds() {
+        let (mut r, h) = setup();
+        let g = join(&mut r, "guest");
+        let off = join(&mut r, "offline");
+        r.disconnected(0, off);
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None);
+        r.test_set_status(
+            h,
+            MediaStatus::Ready {
+                duration_ms: None,
+                title: None,
+            },
+        );
+        let effects = r.command(
+            1000,
+            h,
+            ClientMsg::PlaylistSelect {
+                req_id: 1,
+                item_id: ItemId(2),
+            },
+        );
+        let p = last_playback(&effects);
+        assert_eq!(p.item_id, Some(ItemId(2)));
+        assert!(!p.paused);
+        assert_eq!((p.position_ms, p.at_server_ms), (0, 1000));
+        let hold = p.hold.unwrap();
+        assert_eq!(hold.reason, HoldReason::ItemStart);
+        assert_eq!(hold.waiting_for, vec![h, g]);
+        assert!(
+            r.state()
+                .participants
+                .iter()
+                .all(|p| p.status == MediaStatus::Loading)
+        );
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistSelect {
+                req_id: 2,
+                item_id: ItemId(9),
+            },
+        );
+        assert_denied(&effects, h, 2, ErrorCode::UnknownItem);
+    }
+
+    #[test]
+    fn missing_file_skipped_on_change() {
+        let (mut r, h) = setup();
+        add(
+            &mut r,
+            0,
+            h,
+            vec![file_src("a"), file_src("b"), file_src("c")],
+            None,
+        );
+        r.set_library(0, vec![file_info("a"), file_info("c")]);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::PlaylistSelect {
+                req_id: 1,
+                item_id: ItemId(2),
+            },
+        );
+        assert_eq!(r.playback().item_id, Some(ItemId(3)));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::ItemSkipped {
+                item_id: ItemId(2),
+                reason: SkipReason::FileMissing
+            }));
+    }
+
+    #[test]
+    fn playlist_requires_control() {
+        let (mut r, h) = setup();
+        let g = join(&mut r, "guest");
+        r.command(
+            0,
+            h,
+            ClientMsg::SetControlMode {
+                req_id: 1,
+                mode: ControlMode::HostOnly,
+            },
+        );
+        let effects = r.command(
+            0,
+            g,
+            ClientMsg::PlaylistAdd {
+                req_id: 2,
+                sources: vec![file_src("a")],
+                after: None,
+            },
+        );
+        assert_denied(&effects, g, 2, ErrorCode::NotPermitted);
+    }
+
+    #[test]
+    fn duplicate_file_gets_distinct_item_ids() {
+        let (mut r, h) = setup();
+        add(&mut r, 0, h, vec![file_src("a"), file_src("a")], None);
+        assert_eq!(playlist_ids(&r), vec![1, 2]);
+    }
+
+    #[test]
+    fn set_library_updates_item_metadata() {
+        let (mut r, h) = setup();
+        add(&mut r, 0, h, vec![file_src("a")], None);
+        let mut info = file_info("a");
+        info.fingerprint = Some(Fingerprint {
+            size: 5,
+            hash: "00".repeat(32),
+        });
+        let effects = r.set_library(0, vec![info]);
+        assert_eq!(r.state().playlist[0].fingerprint.as_ref().unwrap().size, 5);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::Broadcast {
+                msg: ServerMsg::Room(_)
+            }
+        )));
+    }
+}
