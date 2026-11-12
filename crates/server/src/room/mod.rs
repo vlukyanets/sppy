@@ -4,13 +4,14 @@ mod participants;
 mod permissions;
 mod playback;
 mod playlist;
+mod status;
 
 use std::collections::{HashMap, VecDeque};
 
 use sppy_proto::{
     ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, FileId, Item, MediaStatus,
-    NoticeAction, Participant, ParticipantId, PlaybackState, ReqId, RoomId, RoomSettings,
-    RoomState, ServerMsg, Welcome,
+    NoticeAction, Participant, ParticipantId, PlaybackState, ProgressEntry, ReqId, RoomId,
+    RoomSettings, RoomState, ServerMsg, Welcome,
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
@@ -28,17 +29,9 @@ pub struct RoomConfig {
 /// Something the I/O layer must do after the room handled an input.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    Send {
-        to: ParticipantId,
-        msg: ServerMsg,
-    },
-    Broadcast {
-        msg: ServerMsg,
-    },
-    Close {
-        to: ParticipantId,
-        reason: CloseReason,
-    },
+    Send { to: ParticipantId, msg: ServerMsg },
+    Broadcast { msg: ServerMsg },
+    Close { to: ParticipantId, reason: CloseReason },
     Persist,
 }
 
@@ -61,6 +54,10 @@ pub struct Room {
     catalog: HashMap<FileId, FileInfo>,
     playback: PlaybackState,
     chat: VecDeque<ChatMessage>,
+    stalled_since: HashMap<ParticipantId, u64>,
+    progress: HashMap<ParticipantId, ProgressEntry>,
+    progress_dirty: bool,
+    last_progress_ms: Option<u64>,
 }
 
 impl Room {
@@ -84,6 +81,10 @@ impl Room {
                 cause: None,
             },
             chat: VecDeque::new(),
+            stalled_since: HashMap::new(),
+            progress: HashMap::new(),
+            progress_dirty: false,
+            last_progress_ms: None,
         }
     }
 
@@ -108,60 +109,57 @@ impl Room {
 
     /// Whether a session token belongs to a current (possibly disconnected) participant.
     pub fn session_valid(&self, session_token: &str) -> bool {
-        self.members
-            .iter()
-            .any(|m| m.session_token == session_token)
+        self.members.iter().any(|m| m.session_token == session_token)
     }
 
     /// Periodic housekeeping (every 250 ms from the I/O layer).
     pub fn tick(&mut self, now_ms: u64) -> Vec<Effect> {
-        self.expire_disconnected(now_ms)
+        let mut effects = self.expire_disconnected(now_ms);
+        effects.extend(self.check_stalls(now_ms));
+        effects.extend(self.flush_progress(now_ms));
+        effects
     }
 
     /// Handle a room-level client request from `pid`.
     pub fn command(&mut self, now_ms: u64, pid: ParticipantId, msg: ClientMsg) -> Vec<Effect> {
         match msg {
-            ClientMsg::Play {
-                req_id,
-                position_ms,
-            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Play(position_ms)),
-            ClientMsg::Pause {
-                req_id,
-                position_ms,
-            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Pause(position_ms)),
-            ClientMsg::Seek {
-                req_id,
-                position_ms,
-            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Seek(position_ms)),
+            ClientMsg::Play { req_id, position_ms } => {
+                self.playback_command(now_ms, pid, req_id, PlaybackCmd::Play(position_ms))
+            }
+            ClientMsg::Pause { req_id, position_ms } => {
+                self.playback_command(now_ms, pid, req_id, PlaybackCmd::Pause(position_ms))
+            }
+            ClientMsg::Seek { req_id, position_ms } => {
+                self.playback_command(now_ms, pid, req_id, PlaybackCmd::Seek(position_ms))
+            }
             ClientMsg::SetSpeed { req_id, speed } => {
                 self.playback_command(now_ms, pid, req_id, PlaybackCmd::SetSpeed(speed))
             }
-            ClientMsg::PlaylistAdd {
-                req_id,
-                sources,
-                after,
-            } => self.playlist_add(now_ms, pid, req_id, sources, after),
+            ClientMsg::PlaylistAdd { req_id, sources, after } => {
+                self.playlist_add(now_ms, pid, req_id, sources, after)
+            }
             ClientMsg::PlaylistRemove { req_id, item_id } => {
                 self.playlist_remove(now_ms, pid, req_id, item_id)
             }
-            ClientMsg::PlaylistMove {
-                req_id,
-                item_id,
-                after,
-            } => self.playlist_move(pid, req_id, item_id, after),
+            ClientMsg::PlaylistMove { req_id, item_id, after } => {
+                self.playlist_move(pid, req_id, item_id, after)
+            }
             ClientMsg::PlaylistSelect { req_id, item_id } => {
                 self.playlist_select(now_ms, pid, req_id, item_id)
             }
+            ClientMsg::SetStatus { item_id, status } => {
+                self.set_status(now_ms, pid, item_id, status)
+            }
+            ClientMsg::Progress { item_id, delivery } => self.progress(pid, item_id, delivery),
+            ClientMsg::ItemEnded { item_id } => self.item_ended(now_ms, item_id),
+            ClientMsg::Chat { text } => self.chat(now_ms, pid, text),
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
-            ClientMsg::SetCanControl {
-                req_id,
-                participant_id,
-                allowed,
-            } => self.set_can_control(pid, req_id, participant_id, allowed),
-            ClientMsg::Kick {
-                req_id,
-                participant_id,
-            } => self.kick(pid, req_id, participant_id),
+            ClientMsg::SetCanControl { req_id, participant_id, allowed } => {
+                self.set_can_control(pid, req_id, participant_id, allowed)
+            }
+            ClientMsg::Kick { req_id, participant_id } => {
+                self.kick(now_ms, pid, req_id, participant_id)
+            }
             other => match other.req_id() {
                 Some(req_id) => self.denied(pid, req_id, ErrorCode::InvalidRequest),
                 None => Vec::new(),
@@ -172,38 +170,30 @@ impl Room {
     /// `Denied` followed by a resync of playback and room, to `pid` only.
     fn denied(&self, pid: ParticipantId, req_id: ReqId, code: ErrorCode) -> Vec<Effect> {
         vec![
-            Effect::Send {
-                to: pid,
-                msg: ServerMsg::Denied { req_id, code },
-            },
-            Effect::Send {
-                to: pid,
-                msg: ServerMsg::Playback(self.playback.clone()),
-            },
-            Effect::Send {
-                to: pid,
-                msg: ServerMsg::Room(self.state()),
-            },
+            Effect::Send { to: pid, msg: ServerMsg::Denied { req_id, code } },
+            Effect::Send { to: pid, msg: ServerMsg::Playback(self.playback.clone()) },
+            Effect::Send { to: pid, msg: ServerMsg::Room(self.state()) },
         ]
     }
 
     /// Participants who can block the room: connected, player open, not failed.
     fn active_ids(&self) -> Vec<ParticipantId> {
-        self.members
-            .iter()
-            .filter(|m| {
-                m.info.connected
-                    && !matches!(
-                        m.info.status,
-                        MediaStatus::PlayerClosed | MediaStatus::Failed { .. }
-                    )
-            })
-            .map(|m| m.info.id)
-            .collect()
+        self.members.iter().map(|m| m.info.id).filter(|pid| self.is_active(*pid)).collect()
+    }
+
+    fn is_active(&self, pid: ParticipantId) -> bool {
+        self.member(pid).is_some_and(|m| {
+            m.info.connected
+                && !matches!(m.info.status, MediaStatus::PlayerClosed | MediaStatus::Failed { .. })
+        })
     }
 
     /// Hook for per-item state that must reset on item change (extended later).
-    fn on_item_changed(&mut self) {}
+    fn on_item_changed(&mut self) {
+        self.stalled_since.clear();
+        self.progress.clear();
+        self.progress_dirty = false;
+    }
 
     fn current_item(&self) -> Option<&Item> {
         let id = self.playback.item_id?;
@@ -235,15 +225,11 @@ impl Room {
     }
 
     fn broadcast_room(&self) -> Effect {
-        Effect::Broadcast {
-            msg: ServerMsg::Room(self.state()),
-        }
+        Effect::Broadcast { msg: ServerMsg::Room(self.state()) }
     }
 
     fn notice(actor: Option<ParticipantId>, action: NoticeAction) -> Effect {
-        Effect::Broadcast {
-            msg: ServerMsg::Event(Event::Notice { actor, action }),
-        }
+        Effect::Broadcast { msg: ServerMsg::Event(Event::Notice { actor, action }) }
     }
 
     #[cfg(test)]

@@ -35,11 +35,7 @@ impl Room {
             return Err(ErrorCode::InvalidRequest);
         }
         let lower = nick.to_lowercase();
-        if self
-            .members
-            .iter()
-            .any(|m| m.info.nickname.to_lowercase() == lower)
-        {
+        if self.members.iter().any(|m| m.info.nickname.to_lowercase() == lower) {
             return Err(ErrorCode::NicknameTaken);
         }
         if self.members.len() >= self.config.max_participants {
@@ -61,10 +57,7 @@ impl Room {
         });
         let mut effects = vec![self.welcome(now_ms, pid), self.broadcast_room()];
         effects.push(Self::notice(Some(pid), NoticeAction::Joined));
-        Ok(Joined {
-            participant_id: pid,
-            effects,
-        })
+        Ok(Joined { participant_id: pid, effects })
     }
 
     pub fn resume(&mut self, now_ms: u64, session_token: &str) -> Result<Joined, ErrorCode> {
@@ -77,10 +70,7 @@ impl Room {
         m.disconnected_at = None;
         let pid = m.info.id;
         let effects = vec![self.welcome(now_ms, pid), self.broadcast_room()];
-        Ok(Joined {
-            participant_id: pid,
-            effects,
-        })
+        Ok(Joined { participant_id: pid, effects })
     }
 
     /// The socket dropped; keep the participant for the resume grace period.
@@ -90,16 +80,19 @@ impl Room {
         };
         m.info.connected = false;
         m.disconnected_at = Some(now_ms);
-        vec![self.broadcast_room()]
+        self.stalled_since.remove(&pid);
+        let mut effects = vec![self.broadcast_room()];
+        effects.extend(self.reevaluate_hold(now_ms));
+        effects
     }
 
     /// `Bye` or kick: remove immediately.
-    pub fn leave(&mut self, _now_ms: u64, pid: ParticipantId) -> Vec<Effect> {
+    pub fn leave(&mut self, now_ms: u64, pid: ParticipantId) -> Vec<Effect> {
         if self.remove_member(pid) {
-            vec![
-                self.broadcast_room(),
-                Self::notice(Some(pid), NoticeAction::Left),
-            ]
+            let mut effects =
+                vec![self.broadcast_room(), Self::notice(Some(pid), NoticeAction::Left)];
+            effects.extend(self.reevaluate_hold(now_ms));
+            effects
         } else {
             Vec::new()
         }
@@ -108,6 +101,8 @@ impl Room {
     pub(super) fn remove_member(&mut self, pid: ParticipantId) -> bool {
         let before = self.members.len();
         self.members.retain(|m| m.info.id != pid);
+        self.stalled_since.remove(&pid);
+        self.progress.remove(&pid);
         self.members.len() != before
     }
 
@@ -116,10 +111,7 @@ impl Room {
         let expired: Vec<ParticipantId> = self
             .members
             .iter()
-            .filter(|m| {
-                m.disconnected_at
-                    .is_some_and(|t| now_ms.saturating_sub(t) >= grace)
-            })
+            .filter(|m| m.disconnected_at.is_some_and(|t| now_ms.saturating_sub(t) >= grace))
             .map(|m| m.info.id)
             .collect();
         let mut effects = Vec::new();

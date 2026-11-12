@@ -34,11 +34,7 @@ impl Room {
                 changed = true;
             }
         }
-        if changed {
-            vec![self.broadcast_room()]
-        } else {
-            Vec::new()
-        }
+        if changed { vec![self.broadcast_room()] } else { Vec::new() }
     }
 
     pub(super) fn playlist_add(
@@ -59,11 +55,9 @@ impl Room {
         for source in sources {
             let (title, fingerprint, subtitles) = match &source {
                 Source::File { file_id } => match self.catalog.get(file_id) {
-                    Some(info) => (
-                        info.title.clone(),
-                        info.fingerprint.clone(),
-                        info.subtitles.clone(),
-                    ),
+                    Some(info) => {
+                        (info.title.clone(), info.fingerprint.clone(), info.subtitles.clone())
+                    }
                     None => return self.denied(pid, req_id, ErrorCode::UnknownFile),
                 },
                 Source::Url { url } => (url.clone(), None, Vec::new()),
@@ -97,10 +91,7 @@ impl Room {
         } else {
             effects.push(self.broadcast_room());
         }
-        effects.push(Self::notice(
-            Some(pid),
-            NoticeAction::PlaylistAdded { item_ids: ids },
-        ));
+        effects.push(Self::notice(Some(pid), NoticeAction::PlaylistAdded { item_ids: ids }));
         effects.push(Effect::Persist);
         effects
     }
@@ -125,10 +116,7 @@ impl Room {
         } else {
             vec![self.broadcast_room()]
         };
-        effects.push(Self::notice(
-            Some(pid),
-            NoticeAction::PlaylistRemoved { item_id },
-        ));
+        effects.push(Self::notice(Some(pid), NoticeAction::PlaylistRemoved { item_id }));
         effects.push(Effect::Persist);
         effects
     }
@@ -188,10 +176,7 @@ impl Room {
             if self.file_missing(id) {
                 effects.push(Self::notice(
                     None,
-                    NoticeAction::ItemSkipped {
-                        item_id: id,
-                        reason: SkipReason::FileMissing,
-                    },
+                    NoticeAction::ItemSkipped { item_id: id, reason: SkipReason::FileMissing },
                 ));
                 next = self.item_after(id);
             } else {
@@ -210,14 +195,9 @@ impl Room {
         match next {
             Some(id) => {
                 self.playback.paused = false;
-                self.playback.hold = Some(Hold {
-                    reason: HoldReason::ItemStart,
-                    waiting_for: self.active_ids(),
-                });
-                effects.push(Self::notice(
-                    None,
-                    NoticeAction::ItemChanged { item_id: id },
-                ));
+                self.playback.hold =
+                    Some(Hold { reason: HoldReason::ItemStart, waiting_for: self.active_ids() });
+                effects.push(Self::notice(None, NoticeAction::ItemChanged { item_id: id }));
             }
             None => {
                 self.playback.paused = true;
@@ -230,13 +210,10 @@ impl Room {
     }
 
     fn file_missing(&self, id: ItemId) -> bool {
-        self.playlist
-            .iter()
-            .find(|i| i.item_id == id)
-            .is_some_and(|i| match &i.source {
-                Source::File { file_id } => !self.catalog.contains_key(file_id),
-                Source::Url { .. } => false,
-            })
+        self.playlist.iter().find(|i| i.item_id == id).is_some_and(|i| match &i.source {
+            Source::File { file_id } => !self.catalog.contains_key(file_id),
+            Source::Url { .. } => false,
+        })
     }
 
     pub(super) fn position_of(&self, id: ItemId) -> Option<usize> {

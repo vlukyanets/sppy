@@ -47,9 +47,7 @@ impl Room {
             }
             PlaybackCmd::Seek(pos) => {
                 self.rebase(now_ms, pos);
-                NoticeAction::Seeked {
-                    to_ms: self.playback.position_ms,
-                }
+                NoticeAction::Seeked { to_ms: self.playback.position_ms }
             }
             PlaybackCmd::SetSpeed(speed) => {
                 self.rebase(now_ms, current);
@@ -58,31 +56,19 @@ impl Room {
             }
         };
         self.playback.seq += 1;
-        self.playback.cause = Some(Cause {
-            participant_id: pid,
-            req_id,
-        });
-        vec![
-            self.broadcast_playback(),
-            Self::notice(Some(pid), action),
-            Effect::Persist,
-        ]
+        self.playback.cause = Some(Cause { participant_id: pid, req_id });
+        vec![self.broadcast_playback(), Self::notice(Some(pid), action), Effect::Persist]
     }
 
     /// Set `P` at `T = now`, clamped to the current item's known duration.
     pub(super) fn rebase(&mut self, now_ms: u64, position_ms: u64) {
-        let limit = self
-            .current_item()
-            .and_then(|i| i.duration_ms)
-            .unwrap_or(u64::MAX);
+        let limit = self.current_item().and_then(|i| i.duration_ms).unwrap_or(u64::MAX);
         self.playback.position_ms = position_ms.min(limit);
         self.playback.at_server_ms = now_ms;
     }
 
     pub(super) fn broadcast_playback(&self) -> Effect {
-        Effect::Broadcast {
-            msg: ServerMsg::Playback(self.playback.clone()),
-        }
+        Effect::Broadcast { msg: ServerMsg::Playback(self.playback.clone()) }
     }
 
     #[cfg(test)]

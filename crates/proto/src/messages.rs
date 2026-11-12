@@ -187,33 +187,16 @@ pub enum Event {
 #[serde(tag = "type")]
 pub enum ServerMsg {
     Welcome(Welcome),
-    Reject {
-        code: ErrorCode,
-        message: String,
-    },
-    Pong {
-        client_time_ms: u64,
-        server_time_ms: u64,
-    },
+    Reject { code: ErrorCode, message: String },
+    Pong { client_time_ms: u64, server_time_ms: u64 },
     Playback(PlaybackState),
     Room(RoomState),
-    ProgressBatch {
-        entries: Vec<ProgressEntry>,
-    },
+    ProgressBatch { entries: Vec<ProgressEntry> },
     Event(Event),
-    Denied {
-        req_id: ReqId,
-        code: ErrorCode,
-    },
-    Library {
-        roots: Vec<LibraryNode>,
-    },
-    InviteToken {
-        token: String,
-    },
-    Closing {
-        reason: CloseReason,
-    },
+    Denied { req_id: ReqId, code: ErrorCode },
+    Library { roots: Vec<LibraryNode> },
+    InviteToken { token: String },
+    Closing { reason: CloseReason },
 }
 
 /// Parse one client text frame.

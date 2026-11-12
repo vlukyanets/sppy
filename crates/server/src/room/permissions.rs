@@ -53,16 +53,14 @@ impl Room {
             self.broadcast_room(),
             Self::notice(
                 Some(pid),
-                NoticeAction::CanControlChanged {
-                    participant_id: target,
-                    allowed,
-                },
+                NoticeAction::CanControlChanged { participant_id: target, allowed },
             ),
         ]
     }
 
     pub(super) fn kick(
         &mut self,
+        now_ms: u64,
         pid: ParticipantId,
         req_id: ReqId,
         target: ParticipantId,
@@ -73,18 +71,12 @@ impl Room {
         if target == pid || !self.remove_member(target) {
             return self.denied(pid, req_id, ErrorCode::InvalidRequest);
         }
-        vec![
-            Effect::Close {
-                to: target,
-                reason: CloseReason::Kicked,
-            },
+        let mut effects = vec![
+            Effect::Close { to: target, reason: CloseReason::Kicked },
             self.broadcast_room(),
-            Self::notice(
-                Some(pid),
-                NoticeAction::Kicked {
-                    participant_id: target,
-                },
-            ),
-        ]
+            Self::notice(Some(pid), NoticeAction::Kicked { participant_id: target }),
+        ];
+        effects.extend(self.reevaluate_hold(now_ms));
+        effects
     }
 }
