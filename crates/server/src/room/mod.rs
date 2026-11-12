@@ -109,6 +109,11 @@ impl Room {
         self.member(pid).is_some_and(|m| m.info.is_host)
     }
 
+    /// Session tokens of all current (possibly disconnected) participants.
+    pub fn session_tokens(&self) -> impl Iterator<Item = &str> {
+        self.members.iter().map(|m| m.session_token.as_str())
+    }
+
     /// Whether a session token belongs to a current (possibly disconnected) participant.
     pub fn session_valid(&self, session_token: &str) -> bool {
         self.members.iter().any(|m| m.session_token == session_token)

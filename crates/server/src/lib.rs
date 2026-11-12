@@ -6,6 +6,7 @@ pub mod error;
 mod http;
 mod hub;
 pub mod library;
+mod media;
 pub mod paths;
 mod persist;
 pub mod room;
@@ -67,18 +68,38 @@ pub async fn start(config: ServerConfig, data_dir: PathBuf) -> Result<ServerHand
     let clock = ServerClock::new();
     let invite = Arc::new(RwLock::new(tokens.invite.clone()));
     let shared = SharedTokens { host: tokens.host.clone(), invite: invite.clone() };
-    let room = match persist::load_state(&data_dir) {
+    let mut room = match persist::load_state(&data_dir) {
         Some(saved) => Room::restore(config::room_config(&config), saved),
         None => Room::new(config::room_config(&config)),
     };
+    // Quick scan now (no hashing); fingerprints follow in the background.
+    let roots = config.media.clone();
+    let library = tokio::task::spawn_blocking(move || library::Library::scan(&roots))
+        .await
+        .map_err(|e| ServerError::State(format!("library scan failed: {e}")))?;
+    let _ = room.set_library(clock.now_ms(), library.file_infos());
+    let media =
+        Arc::new(media::SharedMedia { library: RwLock::new(library), ..Default::default() });
+
     let (hub_tx, hub_rx) = mpsc::unbounded_channel();
-    tokio::spawn(Hub::new(room, clock, data_dir, shared).run(hub_rx));
+    let hub = Hub::new(
+        room,
+        clock,
+        data_dir,
+        shared,
+        media.clone(),
+        config.media.clone(),
+        hub_tx.clone(),
+    );
+    hub.spawn_scan();
+    tokio::spawn(hub.run(hub_rx));
 
     let state = http::AppState {
         hub: hub_tx.clone(),
         clock,
         ping_timeout_ms: config.ping_timeout_ms,
         next_conn_id: Arc::new(AtomicU64::new(1)),
+        media,
     };
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let app = http::router(state);

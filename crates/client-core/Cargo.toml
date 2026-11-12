@@ -19,6 +19,7 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
 sppy-server.workspace = true
 sppy-player = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }

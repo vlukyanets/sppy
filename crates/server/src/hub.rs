@@ -1,5 +1,6 @@
 //! The room actor: one task owns the `Room` and every participant's outbound channel.
 
+use sppy_common::config::MediaRoot;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -9,6 +10,8 @@ use sppy_proto::{Auth, ClientMsg, CloseReason, ErrorCode, ParticipantId, ServerM
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::ServerClock;
+use crate::library::Library;
+use crate::media::{SharedMedia, scan_with_fingerprints};
 use crate::room::{Effect, JoinRequest, JoinRole, Joined, Room};
 use crate::tokens;
 
@@ -40,6 +43,8 @@ pub enum HubInput {
     Shutdown {
         done: oneshot::Sender<()>,
     },
+    /// A (re)scan with fingerprints finished.
+    LibraryUpdated(Library),
 }
 
 /// Tokens shared between the hub and the server handle.
@@ -55,21 +60,53 @@ pub struct Hub {
     data_dir: PathBuf,
     tokens: SharedTokens,
     conns: HashMap<ParticipantId, (u64, Outbound)>,
+    media: Arc<SharedMedia>,
+    media_roots: Vec<MediaRoot>,
+    self_tx: mpsc::UnboundedSender<HubInput>,
     dirty: bool,
     last_save_ms: Option<u64>,
 }
 
 impl Hub {
-    pub fn new(room: Room, clock: ServerClock, data_dir: PathBuf, tokens: SharedTokens) -> Hub {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        room: Room,
+        clock: ServerClock,
+        data_dir: PathBuf,
+        tokens: SharedTokens,
+        media: Arc<SharedMedia>,
+        media_roots: Vec<MediaRoot>,
+        self_tx: mpsc::UnboundedSender<HubInput>,
+    ) -> Hub {
         Hub {
             room,
             clock,
             data_dir,
             tokens,
             conns: HashMap::new(),
+            media,
+            media_roots,
+            self_tx,
             dirty: false,
             last_save_ms: None,
         }
+    }
+
+    /// Hash fingerprints / rescan in the background; the result comes back as `LibraryUpdated`.
+    pub fn spawn_scan(&self) {
+        let roots = self.media_roots.clone();
+        let data_dir = self.data_dir.clone();
+        let tx = self.self_tx.clone();
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(move || scan_with_fingerprints(&roots, &data_dir))
+                .await
+            {
+                Ok(lib) => {
+                    let _ = tx.send(HubInput::LibraryUpdated(lib));
+                }
+                Err(e) => tracing::error!("library scan failed: {e}"),
+            }
+        });
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<HubInput>) {
@@ -83,13 +120,17 @@ impl Hub {
                         let _ = done.send(());
                         return;
                     }
-                    Some(input) => self.handle(input),
+                    Some(input) => {
+                        self.handle(input);
+                        self.sync_sessions();
+                    }
                     None => return,
                 },
                 _ = tick.tick() => {
                     let now = self.clock.now_ms();
                     let effects = self.room.tick(now);
                     self.apply(effects);
+                    self.sync_sessions();
                     self.maybe_save(now);
                 }
             }
@@ -135,6 +176,18 @@ impl Hub {
                 }
                 match msg {
                     ClientMsg::RotateInvite { req_id } => self.rotate_invite(pid, req_id),
+                    ClientMsg::GetLibrary => {
+                        let roots = self.media.library.read().expect("library lock").tree();
+                        self.send(pid, ServerMsg::Library { roots });
+                    }
+                    ClientMsg::RescanLibrary { req_id } => {
+                        if self.room.is_host(pid) {
+                            self.spawn_scan();
+                        } else {
+                            let effects = self.room.denied(pid, req_id, ErrorCode::NotHost);
+                            self.apply(effects);
+                        }
+                    }
                     msg => {
                         let effects = self.room.command(now, pid, msg);
                         self.apply(effects);
@@ -153,7 +206,25 @@ impl Hub {
                 let effects = self.room.leave(now, pid);
                 self.apply(effects);
             }
+            HubInput::LibraryUpdated(lib) => {
+                let infos = lib.file_infos();
+                let roots = lib.tree();
+                *self.media.library.write().expect("library lock") = lib;
+                let effects = self.room.set_library(now, infos);
+                self.apply(effects);
+                self.apply(vec![Effect::Broadcast { msg: ServerMsg::Library { roots } }]);
+            }
             HubInput::Shutdown { .. } => unreachable!("handled in run"),
+        }
+    }
+
+    /// Keep the `/media` token set equal to the room's sessions.
+    fn sync_sessions(&self) {
+        let current: std::collections::HashSet<String> =
+            self.room.session_tokens().map(str::to_owned).collect();
+        let mut shared = self.media.sessions.write().expect("sessions lock");
+        if *shared != current {
+            *shared = current;
         }
     }
 

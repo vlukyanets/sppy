@@ -5,7 +5,7 @@ use std::time::Duration;
 use sppy_player::{MediaSource, Player, PlayerEvent, PlayerLauncher};
 use sppy_proto::{
     ClientMsg, CloseReason, Delivery, ErrorCode, Event, ItemId, MediaStatus, PlaybackState, ReqId,
-    ServerMsg, Source,
+    ServerMsg,
 };
 use sppy_sync::{
     Classified, Correction, DriftController, EchoFilter, Observed, PendingOp, RawEvent, Target,
@@ -18,6 +18,7 @@ use crate::api::{ConnState, Snapshot, UiCommand, UiEvent};
 use crate::config::ClientConfig;
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
 use crate::link::{ServerAddress, parse_address};
+use crate::media::{Resolved, stream_source};
 use crate::notice::{nickname, render_notice};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -413,29 +414,15 @@ impl<L: PlayerLauncher> Session<L> {
         else {
             return;
         };
-        let (media, subs, delivery) = match &item.source {
-            // A "URL" without a scheme is a local path: no network cache to wait for.
-            Source::Url { url } if !url.contains("://") => {
-                (MediaSource::Path(url.into()), Vec::new(), Delivery::Local)
-            }
-            Source::Url { url } => (MediaSource::Url(url.clone()), Vec::new(), Delivery::Stream),
-            Source::File { file_id } => {
-                let (Some(base), Some(token)) = (&self.http_base, &self.session_token) else {
-                    return;
-                };
-                let media = MediaSource::Url(format!("{base}/media/{}?t={token}", file_id.0));
-                let subs = item
-                    .subtitles
-                    .iter()
-                    .map(|s| {
-                        MediaSource::Url(format!(
-                            "{base}/media/{}/sub/{}?t={token}",
-                            file_id.0, s.index
-                        ))
-                    })
-                    .collect();
-                (media, subs, Delivery::Stream)
-            }
+        let (Some(base), Some(token)) = (&self.http_base, &self.session_token) else { return };
+        let (media, subs, delivery) = match stream_source(base, &item, token) {
+            Resolved::Stream { media, subtitles } => (media, subtitles, Delivery::Stream),
+            Resolved::Local { path, subtitles } => (
+                MediaSource::Path(path),
+                subtitles.into_iter().map(MediaSource::Path).collect(),
+                Delivery::Local,
+            ),
+            Resolved::Wait => return,
         };
         self.media = MediaState {
             item: Some(id),
