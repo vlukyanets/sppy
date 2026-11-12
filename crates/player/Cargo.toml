@@ -8,6 +8,8 @@ license.workspace = true
 fake = []
 
 [dependencies]
+serde_json.workspace = true
+tracing.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 

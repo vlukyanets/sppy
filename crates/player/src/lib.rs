@@ -1,5 +1,7 @@
 //! Player abstraction and backends (mpv). The only crate that knows concrete players.
 
+pub mod mpv;
+
 #[cfg(feature = "fake")]
 pub mod fake;
 
