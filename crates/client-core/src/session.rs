@@ -50,6 +50,8 @@ struct MediaState {
     local: bool,
     /// Waiting for a preload download of this item.
     downloading: bool,
+    /// Session token baked into the loaded media URLs (server streams only).
+    token: Option<String>,
     /// A position jump we did not cause: probably the user seeking; hold corrections until then.
     foreign_jump_until: u64,
     duration_ms: Option<u64>,
@@ -71,6 +73,7 @@ impl Default for MediaState {
             cache_eof: false,
             local: false,
             downloading: false,
+            token: None,
             foreign_jump_until: 0,
             duration_ms: None,
             title: None,
@@ -107,6 +110,8 @@ pub(crate) struct Session<L: PlayerLauncher> {
     index_rx: mpsc::UnboundedReceiver<()>,
     /// Files chosen by hand per item.
     overrides: std::collections::HashMap<ItemId, std::path::PathBuf>,
+    /// The user closed the player: do not reopen it on reconnect.
+    player_closed_by_user: bool,
 }
 
 async fn next_conn_event(conn: &mut Option<ConnectionHandle>) -> Option<ConnEvent> {
@@ -175,6 +180,7 @@ impl<L: PlayerLauncher> Session<L> {
             local_index,
             index_rx,
             overrides: Default::default(),
+            player_closed_by_user: false,
         }
     }
 
@@ -252,6 +258,7 @@ impl<L: PlayerLauncher> Session<L> {
                 self.start_connection(addr, AuthToken::Host(host_token));
             }
             UiCommand::Disconnect => {
+                self.forget_server_media();
                 self.conn = None;
                 self.snap.connection = ConnState::Idle;
                 self.snap.room = None;
@@ -300,7 +307,10 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::RescanLibrary => {
                 self.request(|req_id| ClientMsg::RescanLibrary { req_id });
             }
-            UiCommand::OpenPlayer => self.ensure_player().await,
+            UiCommand::OpenPlayer => {
+                self.player_closed_by_user = false;
+                self.ensure_player().await;
+            }
             UiCommand::SetMode(mode) => {
                 self.config.mode = mode;
                 self.snap.local.mode = mode;
@@ -317,7 +327,17 @@ impl<L: PlayerLauncher> Session<L> {
         }
     }
 
+    /// Item ids and tokens belong to one server: forget them when leaving it.
+    fn forget_server_media(&mut self) {
+        self.cancel_stale_download(None);
+        self.media = MediaState::default();
+        self.stream_fallback.clear();
+        self.overrides.clear();
+        self.session_token = None;
+    }
+
     fn start_connection(&mut self, addr: ServerAddress, auth: AuthToken) {
+        self.forget_server_media();
         self.http_base = Some(addr.http_base());
         self.conn = Some(spawn_connection_at(addr, auth, self.config.nickname.clone(), self.epoch));
         self.snap.connection = ConnState::Connecting;
@@ -341,13 +361,21 @@ impl<L: PlayerLauncher> Session<L> {
                 self.snap.room = Some(welcome.room);
                 self.snap.playback = Some(welcome.playback);
                 self.snap.chat_history = welcome.chat_history;
+                let token_changed = self.session_token.as_ref() != Some(&welcome.session_token);
                 self.session_token = Some(welcome.session_token);
                 self.awaiting = None;
                 if self.player.is_none() {
-                    self.ensure_player().await;
+                    if !self.player_closed_by_user {
+                        self.ensure_player().await;
+                    }
                 } else {
-                    // A fresh participant on the server starts as Loading: tell it where we are.
-                    if self.media.item.is_some() && self.media.item == self.current_item_id() {
+                    // Media URLs carry the session token: a new session invalidates them.
+                    if token_changed && (self.media.token.is_some() || self.media.downloading) {
+                        self.cancel_stale_download(None);
+                        self.media = MediaState::default();
+                    } else if self.media.item.is_some() && self.media.item == self.current_item_id()
+                    {
+                        // A fresh participant on the server starts as Loading: tell it where we are.
                         self.send_status();
                     }
                     self.apply_playback().await;
@@ -649,9 +677,12 @@ impl<L: PlayerLauncher> Session<L> {
                 return;
             }
         };
+        let streamed_from_server =
+            matches!(&media, MediaSource::Url(u) if u.contains("/media/") && u.contains("?t="));
         self.media = MediaState {
             item: Some(id),
             local: matches!(media, MediaSource::Path(_)),
+            token: streamed_from_server.then(|| self.session_token.clone()).flatten(),
             ..MediaState::default()
         };
         self.echo.issued(self.local_ms(), PendingOp::Load);
@@ -771,6 +802,7 @@ impl<L: PlayerLauncher> Session<L> {
     }
 
     fn player_closed(&mut self) {
+        self.player_closed_by_user = true;
         self.snap.player_open = false;
         if let Some(item_id) = self.media.item {
             self.send(ClientMsg::SetStatus { item_id, status: MediaStatus::PlayerClosed });
@@ -853,6 +885,10 @@ impl<L: PlayerLauncher> Session<L> {
                 self.update_status();
             }
             PlayerEvent::Eof => {
+                // A late EOF of the previous file must not end the item we are loading now.
+                if !self.media.file_loaded || self.echo.is_loading() {
+                    return;
+                }
                 if let Some(item_id) = self.media.item {
                     self.send(ClientMsg::ItemEnded { item_id });
                 }
