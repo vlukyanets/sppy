@@ -1,0 +1,12 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "SetStatus",
+  "item_id": 3,
+  "status": {
+    "kind": "Failed",
+    "message": "boom"
+  }
+}

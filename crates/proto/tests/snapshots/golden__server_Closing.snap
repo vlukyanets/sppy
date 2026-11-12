@@ -1,0 +1,8 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Closing",
+  "reason": "Kicked"
+}

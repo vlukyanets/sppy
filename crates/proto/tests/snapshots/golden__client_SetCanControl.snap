@@ -1,0 +1,10 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "SetCanControl",
+  "req_id": 10,
+  "participant_id": 2,
+  "allowed": true
+}

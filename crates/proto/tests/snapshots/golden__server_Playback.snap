@@ -1,0 +1,23 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Playback",
+  "item_id": 3,
+  "position_ms": 120000,
+  "at_server_ms": 42000,
+  "paused": false,
+  "speed": 1.0,
+  "hold": {
+    "reason": "Stalled",
+    "waiting_for": [
+      2
+    ]
+  },
+  "seq": 17,
+  "cause": {
+    "participant_id": 1,
+    "req_id": 9
+  }
+}

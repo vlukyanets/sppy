@@ -1,0 +1,13 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Progress",
+  "item_id": 3,
+  "delivery": {
+    "kind": "Download",
+    "bytes": 10,
+    "total": 100
+  }
+}

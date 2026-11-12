@@ -1,0 +1,49 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Room",
+  "room_id": "main",
+  "participants": [
+    {
+      "id": 1,
+      "nickname": "alice",
+      "is_host": true,
+      "can_control": true,
+      "connected": true,
+      "status": {
+        "kind": "Ready",
+        "duration_ms": 5400000
+      }
+    }
+  ],
+  "control_mode": "Selected",
+  "playlist": [
+    {
+      "item_id": 3,
+      "source": {
+        "kind": "File",
+        "file_id": "0123456789abcdef"
+      },
+      "title": "Movie",
+      "duration_ms": 5400000,
+      "fingerprint": {
+        "size": 1000000,
+        "hash": "abababababababababababababababababababababababababababababababab"
+      },
+      "subtitles": [
+        {
+          "index": 0,
+          "label": "en",
+          "ext": "srt"
+        }
+      ],
+      "added_by": 1
+    }
+  ],
+  "settings": {
+    "stall_hold_secs": 10,
+    "resume_buffer_secs": 10
+  }
+}

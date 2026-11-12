@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Pong",
+  "client_time_ms": 123,
+  "server_time_ms": 42000
+}

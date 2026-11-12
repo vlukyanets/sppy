@@ -1,0 +1,22 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Library",
+  "roots": [
+    {
+      "kind": "Dir",
+      "name": "Movies",
+      "children": [
+        {
+          "kind": "File",
+          "file_id": "0123456789abcdef",
+          "name": "Movie.mkv",
+          "size": 1000000,
+          "subtitles": []
+        }
+      ]
+    }
+  ]
+}

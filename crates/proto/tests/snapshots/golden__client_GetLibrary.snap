@@ -1,0 +1,7 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "GetLibrary"
+}

@@ -1,0 +1,8 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Ping",
+  "client_time_ms": 123
+}

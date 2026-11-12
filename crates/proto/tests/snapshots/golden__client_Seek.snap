@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Seek",
+  "req_id": 3,
+  "position_ms": 120000
+}

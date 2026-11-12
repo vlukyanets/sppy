@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Kick",
+  "req_id": 11,
+  "participant_id": 2
+}

@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "PlaylistRemove",
+  "req_id": 6,
+  "item_id": 3
+}

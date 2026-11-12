@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "PlaylistMove",
+  "req_id": 7,
+  "item_id": 3
+}

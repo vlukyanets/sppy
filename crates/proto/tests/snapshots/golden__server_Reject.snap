@@ -1,0 +1,12 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Reject",
+  "code": {
+    "kind": "VersionMismatch",
+    "server_protocol": 1
+  },
+  "message": "update"
+}

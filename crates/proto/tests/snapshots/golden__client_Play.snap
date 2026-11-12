@@ -1,0 +1,9 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Play",
+  "req_id": 1,
+  "position_ms": 1000
+}

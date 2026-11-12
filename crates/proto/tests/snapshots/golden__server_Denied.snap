@@ -1,0 +1,11 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Denied",
+  "req_id": 4,
+  "code": {
+    "kind": "NotPermitted"
+  }
+}

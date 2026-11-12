@@ -1,0 +1,13 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Event",
+  "kind": "Notice",
+  "actor": 1,
+  "action": {
+    "kind": "Seeked",
+    "to_ms": 60000
+  }
+}

@@ -1,0 +1,15 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Hello",
+  "protocol": 1,
+  "room": "main",
+  "auth": {
+    "kind": "Invite",
+    "token": "tok"
+  },
+  "nickname": "alice",
+  "client": "sppy-app/0.1.0"
+}

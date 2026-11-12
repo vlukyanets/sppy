@@ -2,11 +2,13 @@
 
 mod ids;
 mod library;
+mod messages;
 mod notice;
 mod state;
 
 pub use ids::*;
 pub use library::*;
+pub use messages::*;
 pub use notice::*;
 pub use state::*;
 

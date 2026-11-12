@@ -1,0 +1,16 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "ProgressBatch",
+  "entries": [
+    {
+      "participant_id": 2,
+      "item_id": 3,
+      "delivery": {
+        "kind": "Stream"
+      }
+    }
+  ]
+}

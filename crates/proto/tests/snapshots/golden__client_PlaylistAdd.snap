@@ -1,0 +1,19 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "PlaylistAdd",
+  "req_id": 5,
+  "sources": [
+    {
+      "kind": "File",
+      "file_id": "0123456789abcdef"
+    },
+    {
+      "kind": "Url",
+      "url": "https://example.com/v"
+    }
+  ],
+  "after": 3
+}

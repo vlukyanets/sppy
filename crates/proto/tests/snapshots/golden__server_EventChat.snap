@@ -1,0 +1,12 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Event",
+  "kind": "Chat",
+  "from": 2,
+  "nickname": "bob",
+  "text": "hi",
+  "at_server_ms": 1000
+}
