@@ -1004,3 +1004,45 @@ mod status {
         assert!(!r.command(0, h, ClientMsg::Chat { text: "x".repeat(500) }).is_empty());
     }
 }
+
+mod persist {
+    use super::*;
+
+    #[test]
+    fn persist_roundtrip() {
+        let mut r = room();
+        let h = host(&mut r);
+        r.command(0, h, ClientMsg::SetControlMode { req_id: 1, mode: ControlMode::Selected });
+        let urls = ["u1", "u2", "u3"].map(|u| Source::Url { url: u.into() }).to_vec();
+        add(&mut r, 0, h, urls, None);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 2, item_id: ItemId(2) });
+        status(&mut r, 0, h, 2, ready());
+        r.command(0, h, ClientMsg::Seek { req_id: 3, position_ms: 40_000 });
+        let saved = r.persisted(2000);
+        assert_eq!(saved.version, 1);
+        assert_eq!(saved.position_ms, 42_000);
+
+        let json = serde_json::to_string(&saved).unwrap();
+        let back: PersistedState = serde_json::from_str(&json).unwrap();
+        let mut restored = Room::restore(config(), back);
+        assert_eq!(restored.state().playlist, r.state().playlist);
+        assert_eq!(restored.state().control_mode, ControlMode::Selected);
+        let p = restored.playback();
+        assert_eq!(p.item_id, Some(ItemId(2)));
+        assert_eq!(p.position_ms, 42_000);
+        assert!(p.paused);
+        assert!(p.hold.is_none());
+
+        let h2 = host(&mut restored);
+        add(&mut restored, 0, h2, vec![Source::Url { url: "u4".into() }], None);
+        assert_eq!(playlist_ids(&restored)[0], 4);
+    }
+
+    #[test]
+    fn restore_has_no_participants() {
+        let mut r = room();
+        host(&mut r);
+        let restored = Room::restore(config(), r.persisted(0));
+        assert!(restored.state().participants.is_empty());
+    }
+}

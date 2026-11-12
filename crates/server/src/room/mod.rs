@@ -2,6 +2,7 @@
 
 mod participants;
 mod permissions;
+mod persist;
 mod playback;
 mod playlist;
 mod status;
@@ -15,6 +16,7 @@ use sppy_proto::{
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
+pub use persist::PersistedState;
 use playback::PlaybackCmd;
 pub use playlist::FileInfo;
 
