@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 mod http;
 mod hub;
+pub mod library;
 pub mod paths;
 mod persist;
 pub mod room;
