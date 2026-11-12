@@ -2,6 +2,7 @@
 
 mod participants;
 mod permissions;
+mod playback;
 
 use std::collections::VecDeque;
 
@@ -12,6 +13,7 @@ use sppy_proto::{
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
+use playback::PlaybackCmd;
 
 /// Static room configuration, derived from the server config.
 #[derive(Debug, Clone)]
@@ -112,8 +114,22 @@ impl Room {
 
     /// Handle a room-level client request from `pid`.
     pub fn command(&mut self, now_ms: u64, pid: ParticipantId, msg: ClientMsg) -> Vec<Effect> {
-        let _ = now_ms;
         match msg {
+            ClientMsg::Play {
+                req_id,
+                position_ms,
+            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Play(position_ms)),
+            ClientMsg::Pause {
+                req_id,
+                position_ms,
+            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Pause(position_ms)),
+            ClientMsg::Seek {
+                req_id,
+                position_ms,
+            } => self.playback_command(now_ms, pid, req_id, PlaybackCmd::Seek(position_ms)),
+            ClientMsg::SetSpeed { req_id, speed } => {
+                self.playback_command(now_ms, pid, req_id, PlaybackCmd::SetSpeed(speed))
+            }
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
             ClientMsg::SetCanControl {
                 req_id,
@@ -147,6 +163,11 @@ impl Room {
                 msg: ServerMsg::Room(self.state()),
             },
         ]
+    }
+
+    fn current_item(&self) -> Option<&Item> {
+        let id = self.playback.item_id?;
+        self.playlist.iter().find(|i| i.item_id == id)
     }
 
     fn member(&self, pid: ParticipantId) -> Option<&Member> {

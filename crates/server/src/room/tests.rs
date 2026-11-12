@@ -1,4 +1,5 @@
 use super::*;
+use sppy_proto::*;
 
 pub(super) fn config() -> RoomConfig {
     RoomConfig {
@@ -422,5 +423,266 @@ mod permissions {
         let effects = r.command(0, h, ClientMsg::RotateInvite { req_id: 6 });
         assert_denied(&effects, h, 6, ErrorCode::InvalidRequest);
         assert!(r.command(0, h, ClientMsg::GetLibrary).is_empty());
+    }
+}
+
+pub(super) fn url_item(id: u64, duration_ms: Option<u64>) -> Item {
+    Item {
+        item_id: ItemId(id),
+        source: Source::Url {
+            url: format!("https://example.com/{id}"),
+        },
+        title: format!("item {id}"),
+        duration_ms,
+        fingerprint: None,
+        subtitles: vec![],
+        added_by: ParticipantId(1),
+    }
+}
+
+pub(super) fn last_playback(effects: &[Effect]) -> PlaybackState {
+    effects
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Effect::Broadcast {
+                msg: ServerMsg::Playback(p),
+            } => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a Playback broadcast")
+}
+
+mod playback {
+    use super::*;
+
+    /// Host + guest, one 60 s item, paused at 0.
+    fn setup(duration_ms: Option<u64>) -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        r.test_set_current(url_item(1, duration_ms));
+        (r, h, g)
+    }
+
+    #[test]
+    fn pause_rebases_position() {
+        let (mut r, h, _) = setup(None);
+        r.command(
+            1000,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        let effects = r.command(
+            4000,
+            h,
+            ClientMsg::Pause {
+                req_id: 2,
+                position_ms: None,
+            },
+        );
+        let p = last_playback(&effects);
+        assert_eq!(p.position_ms, 3000);
+        assert_eq!(p.at_server_ms, 4000);
+        assert!(p.paused);
+        assert_eq!(p.seq, 2);
+        assert_eq!(
+            p.cause,
+            Some(Cause {
+                participant_id: h,
+                req_id: 2
+            })
+        );
+        assert!(has_notice(&effects, |a| *a == NoticeAction::Paused));
+        assert!(effects.contains(&Effect::Persist));
+    }
+
+    #[test]
+    fn pause_uses_client_position() {
+        let (mut r, h, _) = setup(None);
+        r.command(
+            1000,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        let effects = r.command(
+            4000,
+            h,
+            ClientMsg::Pause {
+                req_id: 2,
+                position_ms: Some(2950),
+            },
+        );
+        assert_eq!(last_playback(&effects).position_ms, 2950);
+    }
+
+    #[test]
+    fn play_notice_and_state() {
+        let (mut r, h, _) = setup(None);
+        let effects = r.command(
+            1000,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: Some(500),
+            },
+        );
+        let p = last_playback(&effects);
+        assert!(!p.paused);
+        assert_eq!((p.position_ms, p.at_server_ms), (500, 1000));
+        assert!(has_notice(&effects, |a| *a == NoticeAction::Resumed));
+    }
+
+    #[test]
+    fn seek_while_playing() {
+        let (mut r, h, _) = setup(None);
+        r.command(
+            1000,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        let effects = r.command(
+            5000,
+            h,
+            ClientMsg::Seek {
+                req_id: 2,
+                position_ms: 30_000,
+            },
+        );
+        let p = last_playback(&effects);
+        assert_eq!(
+            (p.position_ms, p.at_server_ms, p.paused),
+            (30_000, 5000, false)
+        );
+        assert!(has_notice(&effects, |a| *a == NoticeAction::Seeked { to_ms: 30_000 }));
+    }
+
+    #[test]
+    fn seek_beyond_duration_clamps() {
+        let (mut r, h, _) = setup(Some(60_000));
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::Seek {
+                req_id: 1,
+                position_ms: 90_000,
+            },
+        );
+        assert_eq!(last_playback(&effects).position_ms, 60_000);
+    }
+
+    #[test]
+    fn set_speed() {
+        let (mut r, h, _) = setup(None);
+        r.command(
+            0,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        let effects = r.command(
+            2000,
+            h,
+            ClientMsg::SetSpeed {
+                req_id: 2,
+                speed: 1.5,
+            },
+        );
+        let p = last_playback(&effects);
+        assert_eq!((p.speed, p.position_ms, p.at_server_ms), (1.5, 2000, 2000));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::SpeedChanged { speed: 1.5 }));
+    }
+
+    #[test]
+    fn speed_out_of_range_denied() {
+        let (mut r, h, _) = setup(None);
+        for (i, speed) in [0.1, 5.0, f64::NAN].into_iter().enumerate() {
+            let effects = r.command(
+                0,
+                h,
+                ClientMsg::SetSpeed {
+                    req_id: i as u32,
+                    speed,
+                },
+            );
+            assert_denied(&effects, h, i as u32, ErrorCode::InvalidRequest);
+        }
+    }
+
+    #[test]
+    fn no_current_item_denied() {
+        let mut r = room();
+        let h = host(&mut r);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        assert_denied(&effects, h, 1, ErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn guest_without_rights_denied_gets_state() {
+        let (mut r, h, g) = setup(None);
+        r.command(
+            0,
+            h,
+            ClientMsg::SetControlMode {
+                req_id: 1,
+                mode: ControlMode::HostOnly,
+            },
+        );
+        let effects = r.command(
+            0,
+            g,
+            ClientMsg::Pause {
+                req_id: 7,
+                position_ms: None,
+            },
+        );
+        assert_denied(&effects, g, 7, ErrorCode::NotPermitted);
+    }
+
+    #[test]
+    fn pause_during_hold_kept_after_hold() {
+        let (mut r, h, _) = setup(None);
+        r.command(
+            0,
+            h,
+            ClientMsg::Play {
+                req_id: 1,
+                position_ms: None,
+            },
+        );
+        r.test_set_hold(Some(Hold {
+            reason: HoldReason::ItemStart,
+            waiting_for: vec![h],
+        }));
+        r.command(
+            100,
+            h,
+            ClientMsg::Pause {
+                req_id: 2,
+                position_ms: None,
+            },
+        );
+        r.test_set_hold(None);
+        assert!(r.playback().paused);
+        assert!(!r.playback().is_playing());
     }
 }
