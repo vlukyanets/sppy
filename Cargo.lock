@@ -1115,6 +1115,10 @@ dependencies = [
 [[package]]
 name = "sppy-player"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "sppy-proto"
