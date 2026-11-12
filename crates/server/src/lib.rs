@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 mod http;
 mod hub;
+mod persist;
 pub mod room;
 pub mod tokens;
 
@@ -64,7 +65,10 @@ pub async fn start(config: ServerConfig, data_dir: PathBuf) -> Result<ServerHand
     let clock = ServerClock::new();
     let invite = Arc::new(RwLock::new(tokens.invite.clone()));
     let shared = SharedTokens { host: tokens.host.clone(), invite: invite.clone() };
-    let room = Room::new(config::room_config(&config));
+    let room = match persist::load_state(&data_dir) {
+        Some(saved) => Room::restore(config::room_config(&config), saved),
+        None => Room::new(config::room_config(&config)),
+    };
     let (hub_tx, hub_rx) = mpsc::unbounded_channel();
     tokio::spawn(Hub::new(room, clock, data_dir, shared).run(hub_rx));
 

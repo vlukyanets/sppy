@@ -13,6 +13,8 @@ use crate::room::{Effect, JoinRequest, JoinRole, Joined, Room};
 use crate::tokens;
 
 const TICK: Duration = Duration::from_millis(250);
+const SAVE_MIN_INTERVAL_MS: u64 = 5_000;
+const SAVE_PLAYING_INTERVAL_MS: u64 = 10_000;
 
 pub type Outbound = mpsc::UnboundedSender<ServerMsg>;
 
@@ -53,11 +55,21 @@ pub struct Hub {
     data_dir: PathBuf,
     tokens: SharedTokens,
     conns: HashMap<ParticipantId, (u64, Outbound)>,
+    dirty: bool,
+    last_save_ms: Option<u64>,
 }
 
 impl Hub {
     pub fn new(room: Room, clock: ServerClock, data_dir: PathBuf, tokens: SharedTokens) -> Hub {
-        Hub { room, clock, data_dir, tokens, conns: HashMap::new() }
+        Hub {
+            room,
+            clock,
+            data_dir,
+            tokens,
+            conns: HashMap::new(),
+            dirty: false,
+            last_save_ms: None,
+        }
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<HubInput>) {
@@ -75,8 +87,10 @@ impl Hub {
                     None => return,
                 },
                 _ = tick.tick() => {
-                    let effects = self.room.tick(self.clock.now_ms());
+                    let now = self.clock.now_ms();
+                    let effects = self.room.tick(now);
                     self.apply(effects);
+                    self.maybe_save(now);
                 }
             }
         }
@@ -188,7 +202,7 @@ impl Hub {
                         let _ = out.send(ServerMsg::Closing { reason });
                     }
                 }
-                Effect::Persist => {}
+                Effect::Persist => self.dirty = true,
             }
         }
     }
@@ -199,7 +213,33 @@ impl Hub {
         }
     }
 
+    /// Debounced save: on change at most every 5 s; every 10 s while playing (position).
+    fn maybe_save(&mut self, now: u64) {
+        let since = self.last_save_ms.map(|t| now.saturating_sub(t));
+        let due = match since {
+            None => self.dirty,
+            Some(since) => {
+                (self.dirty && since >= SAVE_MIN_INTERVAL_MS)
+                    || (self.room.playback().is_playing() && since >= SAVE_PLAYING_INTERVAL_MS)
+            }
+        };
+        if due {
+            self.save(now);
+        }
+    }
+
+    fn save(&mut self, now: u64) {
+        match crate::persist::save_state(&self.data_dir, &self.room.persisted(now)) {
+            Ok(()) => {
+                self.dirty = false;
+                self.last_save_ms = Some(now);
+            }
+            Err(e) => tracing::error!("cannot save room state: {e}"),
+        }
+    }
+
     fn shutdown(&mut self) {
+        self.save(self.clock.now_ms());
         for (_, (_, out)) in self.conns.drain() {
             let _ = out.send(ServerMsg::Closing { reason: CloseReason::ServerShutdown });
         }

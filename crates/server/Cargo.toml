@@ -16,6 +16,7 @@ thiserror.workspace = true
 tracing.workspace = true
 sppy-proto.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
