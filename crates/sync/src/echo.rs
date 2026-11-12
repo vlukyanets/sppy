@@ -44,6 +44,8 @@ pub enum Classified {
 const SPEED_EPS: f64 = 0.001;
 /// A `Seeked` event this close to a pending seek target is our own.
 pub const SEEK_MATCH_MS: u64 = 1000;
+/// Seeks can take seconds on network streams; their echo is awaited longer than the default.
+pub const SEEK_TIMEOUT_MS: u64 = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct EchoFilter {
@@ -70,10 +72,18 @@ impl EchoFilter {
         self.loading = false;
     }
 
+    fn op_timeout(op: &PendingOp, default_ms: u64) -> u64 {
+        match op {
+            PendingOp::Seek { .. } => SEEK_TIMEOUT_MS.max(default_ms),
+            _ => default_ms,
+        }
+    }
+
     /// Whether one of our own seeks is still in flight.
     pub fn seek_pending(&self, now_ms: u64) -> bool {
         self.pending.iter().any(|(t, op)| {
-            matches!(op, PendingOp::Seek { .. }) && now_ms.saturating_sub(*t) <= self.timeout_ms
+            matches!(op, PendingOp::Seek { .. })
+                && now_ms.saturating_sub(*t) <= SEEK_TIMEOUT_MS.max(self.timeout_ms)
         })
     }
 
@@ -86,7 +96,7 @@ impl EchoFilter {
             return Classified::Ignored;
         }
         let timeout = self.timeout_ms;
-        self.pending.retain(|(t, _)| now_ms.saturating_sub(*t) <= timeout);
+        self.pending.retain(|(t, op)| now_ms.saturating_sub(*t) <= Self::op_timeout(op, timeout));
         let matches = |op: &PendingOp| match (op, ev) {
             (PendingOp::Pause(a), RawEvent::Pause(b)) => *a == b,
             (PendingOp::Seek { target_ms }, RawEvent::Seeked { position_ms }) => {

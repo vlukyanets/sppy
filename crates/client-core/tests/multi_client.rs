@@ -104,3 +104,28 @@ async fn long_stall_holds_and_resumes_with_reserve() {
     let _ = UiCommand::Play;
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn slow_seeking_player_does_not_move_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b =
+        guest(&server, "bob", FakeConfig { seek_delay_ms: 1_300, ..FakeConfig::default() }).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 10, || a.synced() && b.synced()).await;
+    let mut notices = a.handle.subscribe_events();
+    a.send(UiCommand::Seek(200_000));
+    eventually("b followed", 8, || b.synced() && b.remote().position_ms() > 199_000).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let mut seeks = Vec::new();
+    while let Ok(ev) = notices.try_recv() {
+        if let UiEvent::Notice(t) = ev
+            && t.contains("jumped to")
+        {
+            seeks.push(t);
+        }
+    }
+    assert_eq!(seeks.len(), 1, "only the host's seek: {seeks:?}");
+    server.shutdown().await;
+}

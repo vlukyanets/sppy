@@ -106,10 +106,21 @@ fn user_seek_elsewhere_while_own_seek_pending() {
 }
 
 #[test]
-fn seek_pending_reports_own_seeks_only_until_timeout() {
+fn slow_own_seek_is_still_ours() {
     let mut f = filter();
-    assert!(!f.seek_pending(0));
+    f.issued(0, PendingOp::Seek { target_ms: 200_000 });
+    // Network streams and long-GOP files can take well over a second to seek.
+    assert_eq!(
+        f.observe(4_000, RawEvent::Seeked { position_ms: 200_100 }, 200_100),
+        Classified::Ours
+    );
+    assert!(!f.seek_pending(4_001));
+}
+
+#[test]
+fn own_seek_expires_eventually() {
+    let mut f = filter();
     f.issued(0, PendingOp::Seek { target_ms: 5 });
-    assert!(f.seek_pending(500));
-    assert!(!f.seek_pending(1001));
+    assert!(f.seek_pending(9_000));
+    assert!(!f.seek_pending(10_001));
 }
