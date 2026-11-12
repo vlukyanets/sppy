@@ -63,6 +63,12 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
             if let Some(d) = item.duration_ms {
                 ui.weak(fmt_time(d));
             }
+            if matches!(item.source, Source::File { .. })
+                && ui.small_button("📁").on_hover_text("Use my own copy of this file").clicked()
+                && let Some(path) = rfd::FileDialog::new().pick_file()
+            {
+                app.send(UiCommand::ChooseLocalFile { item_id: item.item_id, path });
+            }
             if can {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("✕").on_hover_text("Remove").clicked() {

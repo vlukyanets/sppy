@@ -9,8 +9,8 @@ use sppy_proto::{Item, Source};
 pub enum Resolved {
     /// Play from the network (server media URL or any URL).
     Stream { media: MediaSource, subtitles: Vec<MediaSource> },
-    /// Play a file on this machine.
-    Local { path: PathBuf, subtitles: Vec<PathBuf> },
+    /// Play a file on this machine (subtitles may still come from the server).
+    Local { path: PathBuf, subtitles: Vec<MediaSource> },
     /// Not playable yet (waiting for a download).
     Wait,
 }

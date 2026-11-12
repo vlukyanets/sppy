@@ -20,6 +20,7 @@ use crate::config::{ClientConfig, DeliveryMode};
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
 use crate::download::{DownloadEvent, DownloadJob, Downloader, Priority};
 use crate::link::{ServerAddress, parse_address};
+use crate::local_index::LocalIndex;
 use crate::media::{Resolved, file_url, stream_source, subtitle_url};
 use crate::notice::{nickname, render_notice};
 
@@ -101,6 +102,11 @@ pub(crate) struct Session<L: PlayerLauncher> {
     /// Items whose download failed: streamed instead.
     stream_fallback: std::collections::HashSet<ItemId>,
     cache: MediaCache,
+    local_index: std::sync::Arc<std::sync::Mutex<LocalIndex>>,
+    /// Signals that a (re)scan of my media folders finished.
+    index_rx: mpsc::UnboundedReceiver<()>,
+    /// Files chosen by hand per item.
+    overrides: std::collections::HashMap<ItemId, std::path::PathBuf>,
 }
 
 async fn next_conn_event(conn: &mut Option<ConnectionHandle>) -> Option<ConnEvent> {
@@ -132,6 +138,9 @@ impl<L: PlayerLauncher> Session<L> {
             config.media_cache_dir(),
             config.cache_limit_gb.saturating_mul(1 << 30),
         );
+        let local_index = std::sync::Arc::new(std::sync::Mutex::new(LocalIndex::default()));
+        let (index_tx, index_rx) = mpsc::unbounded_channel();
+        spawn_local_index(local_index.clone(), config.local_media.clone(), index_tx);
         let client = reqwest::Client::new();
         let (downloader, dl_rx) = if config.download_backoff_ms.is_empty() {
             Downloader::spawn(client)
@@ -163,6 +172,9 @@ impl<L: PlayerLauncher> Session<L> {
             dl_rx,
             stream_fallback: Default::default(),
             cache,
+            local_index,
+            index_rx,
+            overrides: Default::default(),
         }
     }
 
@@ -178,6 +190,7 @@ impl<L: PlayerLauncher> Session<L> {
                 ev = next_conn_event(&mut self.conn) => self.on_conn_event(ev).await,
                 ev = next_player_event(&mut self.player) => self.on_player_event(ev).await,
                 ev = self.dl_rx.recv() => if let Some(ev) = ev { self.on_download_event(ev).await },
+                Some(()) = self.index_rx.recv() => self.recheck_local().await,
                 _ = tick.tick() => self.on_tick().await,
             }
             self.publish();
@@ -298,8 +311,8 @@ impl<L: PlayerLauncher> Session<L> {
                 }
                 self.snap.local.cache_used_bytes = self.cache.used_bytes();
             }
-            UiCommand::ChooseLocalFile { .. } => {
-                tracing::warn!("not supported yet: {cmd:?}");
+            UiCommand::ChooseLocalFile { item_id, path } => {
+                self.choose_local_file(item_id, path).await
             }
         }
     }
@@ -376,6 +389,14 @@ impl<L: PlayerLauncher> Session<L> {
                     self.snap.is_host = p.is_host;
                 }
                 self.snap.room = Some(r);
+                let ids: std::collections::HashSet<ItemId> = self
+                    .snap
+                    .room
+                    .iter()
+                    .flat_map(|r| r.playlist.iter().map(|i| i.item_id))
+                    .collect();
+                self.overrides.retain(|id, _| ids.contains(id));
+                self.recheck_local().await;
             }
             ServerMsg::ProgressBatch { entries } => {
                 self.snap.progress = entries.into_iter().map(|e| (e.participant_id, e)).collect();
@@ -477,6 +498,61 @@ impl<L: PlayerLauncher> Session<L> {
             .collect()
     }
 
+    /// A file on this machine for the item: chosen by hand, or found by fingerprint.
+    fn local_copy(&self, item: &Item) -> Option<std::path::PathBuf> {
+        if let Some(p) = self.overrides.get(&item.item_id) {
+            return Some(p.clone());
+        }
+        if !matches!(item.source, Source::File { .. }) {
+            return None;
+        }
+        let fp = item.fingerprint.as_ref()?;
+        self.local_index.lock().expect("local index").find(fp)
+    }
+
+    /// While we are still downloading the current item, switch to a local copy if one appears
+    /// (the fingerprint arrived later, or the folder scan finished).
+    async fn recheck_local(&mut self) {
+        if !self.media.downloading {
+            return;
+        }
+        let Some(item) = self.media.item.and_then(|id| self.item(id)) else { return };
+        if self.local_copy(&item).is_none() {
+            return;
+        }
+        if let Source::File { file_id } = &item.source {
+            self.downloader.cancel(file_id);
+        }
+        if let Some(resolved) = self.resolve(&item) {
+            self.start_item(item.item_id, resolved).await;
+        }
+    }
+
+    async fn choose_local_file(&mut self, item_id: ItemId, path: std::path::PathBuf) {
+        let Some(item) = self.item(item_id) else { return };
+        let fp = {
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || sppy_common::media::fingerprint(&path)).await
+        };
+        match fp {
+            Ok(Ok(fp)) if item.fingerprint.as_ref() == Some(&fp) => {}
+            Ok(Ok(_)) => self.emit(UiEvent::Error(
+                "The file does not match the server's copy; sync will rely on the position only"
+                    .into(),
+            )),
+            _ => {
+                self.emit(UiEvent::Error(format!("Cannot read {}", path.display())));
+                return;
+            }
+        }
+        self.overrides.insert(item_id, path);
+        if self.media.item == Some(item_id) {
+            self.cancel_stale_download(None);
+            self.media = MediaState::default();
+            self.apply_playback().await;
+        }
+    }
+
     /// Stop downloading an item that is no longer current (the `.part` stays for later).
     fn cancel_stale_download(&mut self, wanted: Option<ItemId>) {
         if !self.media.downloading || self.media.item == wanted {
@@ -530,6 +606,13 @@ impl<L: PlayerLauncher> Session<L> {
     /// Decide how the item reaches the player: cache, download (Wait) or stream.
     fn resolve(&self, item: &Item) -> Option<Resolved> {
         let (base, token) = (self.http_base.as_ref()?, self.session_token.as_ref()?);
+        if let Some(path) = self.local_copy(item) {
+            let subtitles = match stream_source(base, item, token) {
+                Resolved::Stream { subtitles, .. } => subtitles,
+                _ => Vec::new(),
+            };
+            return Some(Resolved::Local { path, subtitles });
+        }
         if let Source::File { file_id } = &item.source
             && self.config.mode == DeliveryMode::Preload
             && !self.stream_fallback.contains(&item.item_id)
@@ -537,7 +620,8 @@ impl<L: PlayerLauncher> Session<L> {
             let (_, subs) = self.cache_paths(file_id, item);
             if let Some(path) = self.cache.complete(file_id) {
                 self.cache.touch(file_id);
-                let subtitles = subs.into_iter().filter(|p| p.is_file()).collect();
+                let subtitles =
+                    subs.into_iter().filter(|p| p.is_file()).map(MediaSource::Path).collect();
                 return Some(Resolved::Local { path, subtitles });
             }
             self.downloader.enqueue(self.download_job(item, file_id)?, Priority::Current);
@@ -549,11 +633,9 @@ impl<L: PlayerLauncher> Session<L> {
     async fn start_item(&mut self, id: ItemId, resolved: Resolved) {
         let (media, subs, delivery) = match resolved {
             Resolved::Stream { media, subtitles } => (media, subtitles, Delivery::Stream),
-            Resolved::Local { path, subtitles } => (
-                MediaSource::Path(path),
-                subtitles.into_iter().map(MediaSource::Path).collect(),
-                Delivery::Local,
-            ),
+            Resolved::Local { path, subtitles } => {
+                (MediaSource::Path(path), subtitles, Delivery::Local)
+            }
             Resolved::Wait => {
                 let total = self.item(id).and_then(|i| i.fingerprint).map_or(0, |f| f.size);
                 self.media =
@@ -889,4 +971,31 @@ impl<L: PlayerLauncher> Session<L> {
             tracing::debug!("player command failed: {e}");
         }
     }
+}
+
+/// Build the local index in the background, then refresh it every 10 minutes.
+fn spawn_local_index(
+    index: std::sync::Arc<std::sync::Mutex<LocalIndex>>,
+    roots: Vec<std::path::PathBuf>,
+    done: mpsc::UnboundedSender<()>,
+) {
+    if roots.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        loop {
+            let (idx, r) = (index.clone(), roots.clone());
+            let scanned = tokio::task::spawn_blocking(move || {
+                let mut fresh = LocalIndex::default();
+                std::mem::swap(&mut fresh, &mut *idx.lock().expect("local index"));
+                fresh.rescan(&r);
+                *idx.lock().expect("local index") = fresh;
+            })
+            .await;
+            if scanned.is_err() || done.send(()).is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(600)).await;
+        }
+    });
 }

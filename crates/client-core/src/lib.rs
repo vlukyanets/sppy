@@ -6,6 +6,7 @@ pub mod config;
 pub mod connection;
 pub mod download;
 pub mod link;
+pub mod local_index;
 pub mod media;
 pub mod netaddr;
 pub mod notice;
