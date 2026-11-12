@@ -142,7 +142,7 @@ impl SppyApp {
             Ok(Ok(handle)) => {
                 self.host_starting = None;
                 self.send(UiCommand::BecomeHostConnect {
-                    port: handle.local_addr.port(),
+                    listen: handle.local_addr,
                     host_token: handle.host_token.clone(),
                 });
                 self.host = Some(handle);

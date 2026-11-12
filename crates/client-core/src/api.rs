@@ -20,9 +20,9 @@ pub enum UiCommand {
         address: String,
         nickname: String,
     },
-    /// Join the embedded server on localhost with the host token.
+    /// Join the embedded server (listening on `listen`) with the host token.
     BecomeHostConnect {
-        port: u16,
+        listen: std::net::SocketAddr,
         host_token: String,
     },
     Disconnect,

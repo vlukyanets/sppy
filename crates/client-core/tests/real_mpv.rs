@@ -49,7 +49,7 @@ async fn two_real_mpv_clients_stay_in_sync() {
     let b = spawn_client(cfg("b"), launcher);
     a.commands
         .send(UiCommand::BecomeHostConnect {
-            port: server.local_addr.port(),
+            listen: server.local_addr,
             host_token: server.host_token.clone(),
         })
         .unwrap();

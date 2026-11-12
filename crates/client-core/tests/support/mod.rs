@@ -59,7 +59,7 @@ pub async fn host_with(server: &ServerHandle, fake: FakeConfig, cfg: ClientConfi
     handle
         .commands
         .send(UiCommand::BecomeHostConnect {
-            port: server.local_addr.port(),
+            listen: server.local_addr,
             host_token: server.host_token.clone(),
         })
         .unwrap();

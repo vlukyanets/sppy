@@ -252,9 +252,14 @@ impl<L: PlayerLauncher> Session<L> {
                 },
                 Err(e) => self.emit(UiEvent::Error(e.to_string())),
             },
-            UiCommand::BecomeHostConnect { port, host_token } => {
-                let addr =
-                    ServerAddress { secure: false, host: "127.0.0.1".into(), port, token: None };
+            UiCommand::BecomeHostConnect { listen, host_token } => {
+                let target = crate::netaddr::local_connect_addr(listen);
+                let addr = ServerAddress {
+                    secure: false,
+                    host: target.ip().to_string(),
+                    port: target.port(),
+                    token: None,
+                };
                 self.start_connection(addr, AuthToken::Host(host_token));
             }
             UiCommand::Disconnect => {

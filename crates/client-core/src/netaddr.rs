@@ -35,6 +35,18 @@ pub fn invite_link(
     addr.to_link()
 }
 
+/// Where the local client should connect to reach a server listening on `listen`
+/// (`0.0.0.0` / `::` are not connectable: use the matching loopback).
+pub fn local_connect_addr(listen: std::net::SocketAddr) -> std::net::SocketAddr {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    let ip: IpAddr = match listen.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => Ipv4Addr::LOCALHOST.into(),
+        IpAddr::V6(ip) if ip.is_unspecified() => Ipv6Addr::LOCALHOST.into(),
+        ip => ip,
+    };
+    std::net::SocketAddr::new(ip, listen.port())
+}
+
 /// The address other machines most likely reach us at (no packets are sent).
 pub fn first_non_loopback_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
@@ -82,5 +94,26 @@ mod tests {
         let v6 = Some(IpAddr::V6(Ipv6Addr::new(0xfd7a, 0, 0, 0, 0, 0, 0, 1)));
         assert_eq!(invite_link(None, 8740, "tok", v6), "sppy://[fd7a::1]:8740/tok");
         assert_eq!(invite_link(None, 8740, "tok", None), "sppy://127.0.0.1:8740/tok");
+    }
+}
+
+#[cfg(test)]
+mod connect_tests {
+    use std::net::SocketAddr;
+
+    use super::*;
+
+    #[test]
+    fn unspecified_listen_connects_via_loopback() {
+        let a: SocketAddr = "0.0.0.0:8740".parse().unwrap();
+        assert_eq!(local_connect_addr(a), "127.0.0.1:8740".parse::<SocketAddr>().unwrap());
+        let b: SocketAddr = "[::]:8740".parse().unwrap();
+        assert_eq!(local_connect_addr(b), "[::1]:8740".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn specific_listen_address_is_used_as_is() {
+        let a: SocketAddr = "100.64.1.2:9000".parse().unwrap();
+        assert_eq!(local_connect_addr(a), a);
     }
 }

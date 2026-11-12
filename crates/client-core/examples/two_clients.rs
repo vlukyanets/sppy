@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let a = spawn_client(cfg("alice"), launcher.clone());
     let b = spawn_client(cfg("bob"), launcher);
     a.commands.send(UiCommand::BecomeHostConnect {
-        port: server.local_addr.port(),
+        listen: server.local_addr,
         host_token: server.host_token.clone(),
     })?;
     let invite = format!("sppy://{}/{}", server.local_addr, server.invite_token());
