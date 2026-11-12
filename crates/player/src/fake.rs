@@ -287,6 +287,11 @@ impl FakeRemote {
         lock(&self.state).emit(PlayerEvent::CacheAhead { ms, eof });
     }
 
+    /// The media cannot be opened.
+    pub fn fail_load(&self, message: &str) {
+        lock(&self.state).emit(PlayerEvent::LoadFailed { message: message.to_owned() });
+    }
+
     /// The player process exits: emits `Exited`, then the event stream ends.
     pub fn exit(&self, code: Option<i32>) {
         let mut s = lock(&self.state);

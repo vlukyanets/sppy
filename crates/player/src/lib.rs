@@ -28,13 +28,27 @@ pub struct Capabilities {
 pub enum PlayerEvent {
     TimePos(u64),
     Pause(bool),
-    Seeked { position_ms: u64 },
+    Seeked {
+        position_ms: u64,
+    },
     Speed(f64),
-    FileLoaded { duration_ms: Option<u64>, title: Option<String> },
+    FileLoaded {
+        duration_ms: Option<u64>,
+        title: Option<String>,
+    },
     Buffering(bool),
-    CacheAhead { ms: u64, eof: bool },
+    CacheAhead {
+        ms: u64,
+        eof: bool,
+    },
     Eof,
-    Exited { code: Option<i32> },
+    /// The player could not open the media (e.g. yt-dlp failure, missing file).
+    LoadFailed {
+        message: String,
+    },
+    Exited {
+        code: Option<i32>,
+    },
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
