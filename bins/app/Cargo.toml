@@ -9,3 +9,16 @@ name = "sppy"
 path = "src/main.rs"
 
 [dependencies]
+sppy-proto.workspace = true
+sppy-common.workspace = true
+sppy-server.workspace = true
+sppy-player.workspace = true
+sppy-client-core.workspace = true
+tokio.workspace = true
+eframe.workspace = true
+egui.workspace = true
+rfd.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
