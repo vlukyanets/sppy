@@ -1,9 +1,12 @@
 //! UI panels.
 
+pub mod chat;
 pub mod connect;
+pub mod host;
 pub mod library;
 pub mod participants;
 pub mod playlist;
+pub mod settings;
 
 use sppy_client_core::api::Snapshot;
 

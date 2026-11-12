@@ -27,6 +27,11 @@ pub struct UiState {
     pub last_error: Option<String>,
     pub url: String,
     pub library_requested: bool,
+    pub chat: String,
+    pub chat_seeded_for: Option<sppy_proto::ParticipantId>,
+    pub settings_open: bool,
+    pub extra_args: String,
+    pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
 }
 
 pub struct SppyApp {
@@ -70,6 +75,11 @@ impl SppyApp {
             last_error: None,
             url: String::new(),
             library_requested: false,
+            chat: String::new(),
+            chat_seeded_for: None,
+            settings_open: false,
+            extra_args: config.player.extra_args.join(" "),
+            confirm_kick: None,
         };
         let events = handle.subscribe_events();
         SppyApp { rt, handle, config, paths, ui, events, host: None, host_starting: None }
@@ -192,6 +202,9 @@ impl eframe::App for SppyApp {
         let snap = self.snapshot();
         egui::Panel::top("connect").show(ui, |ui| ui::connect::show(self, ui, &snap));
         egui::Panel::bottom("status").show(ui, |ui| ui::status_line(self, ui, &snap));
+        let ctx = ui.ctx().clone();
+        ui::settings::show(self, &ctx, &snap);
+        ui::participants::kick_dialog(self, &ctx);
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if snap.room.is_none() {
@@ -206,6 +219,13 @@ impl eframe::App for SppyApp {
                     .show(ui, |ui| ui::playlist::show(self, ui, &snap));
                 egui::CollapsingHeader::new("Library")
                     .show(ui, |ui| ui::library::show(self, ui, &snap));
+                if snap.is_host {
+                    egui::CollapsingHeader::new("Host")
+                        .show(ui, |ui| ui::host::show(self, ui, &snap));
+                }
+                egui::CollapsingHeader::new("Chat")
+                    .default_open(true)
+                    .show(ui, |ui| ui::chat::show(self, ui, &snap));
             });
         });
     }

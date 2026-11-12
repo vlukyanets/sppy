@@ -64,6 +64,9 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 app.become_host();
             }
         }
+        if ui.button("⚙").on_hover_text("Settings").clicked() {
+            app.ui.settings_open = !app.ui.settings_open;
+        }
         if !snap.player_open && connected && ui.button("Open player").clicked() {
             app.send(UiCommand::OpenPlayer);
         }

@@ -1,7 +1,7 @@
 //! Participants: badges, connection, status and delivery progress.
 
-use sppy_client_core::api::Snapshot;
-use sppy_proto::{Delivery, MediaStatus};
+use sppy_client_core::api::{Snapshot, UiCommand};
+use sppy_proto::{ControlMode, Delivery, MediaStatus};
 
 use crate::app::SppyApp;
 
@@ -15,7 +15,7 @@ pub fn status_text(s: &MediaStatus) -> String {
     }
 }
 
-pub fn show(_app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
+pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let Some(room) = &snap.room else { return };
     for p in &room.participants {
         ui.horizontal(|ui| {
@@ -46,6 +46,34 @@ pub fn show(_app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 }
                 _ => {}
             }
+            if snap.is_host && !p.is_host {
+                if room.control_mode == ControlMode::Selected {
+                    let mut allowed = p.can_control;
+                    if ui.checkbox(&mut allowed, "ctrl").changed() {
+                        app.send(UiCommand::SetCanControl(p.id, allowed));
+                    }
+                }
+                if ui.small_button("Kick").clicked() {
+                    app.ui.confirm_kick = Some((p.id, p.nickname.clone()));
+                }
+            }
         });
     }
+}
+
+/// Confirmation before removing someone from the room.
+pub fn kick_dialog(app: &mut SppyApp, ctx: &egui::Context) {
+    let Some((pid, name)) = app.ui.confirm_kick.clone() else { return };
+    egui::Window::new("Remove participant").collapsible(false).resizable(false).show(ctx, |ui| {
+        ui.label(format!("Remove {name} from the room?"));
+        ui.horizontal(|ui| {
+            if ui.button("Remove").clicked() {
+                app.send(UiCommand::Kick(pid));
+                app.ui.confirm_kick = None;
+            }
+            if ui.button("Cancel").clicked() {
+                app.ui.confirm_kick = None;
+            }
+        });
+    });
 }
