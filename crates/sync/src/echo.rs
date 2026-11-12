@@ -106,7 +106,12 @@ impl EchoFilter {
             _ => false,
         };
         if let Some(i) = self.pending.iter().position(|(_, op)| matches(op)) {
-            self.pending.remove(i);
+            let (issued_at, op) = self.pending.remove(i);
+            if matches!(op, PendingOp::Seek { .. }) {
+                // Earlier seeks were superseded by this one (mpv reports only the last).
+                self.pending
+                    .retain(|(t, op)| !(matches!(op, PendingOp::Seek { .. }) && *t <= issued_at));
+            }
             return Classified::Ours;
         }
         match ev {

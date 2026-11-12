@@ -117,3 +117,23 @@ async fn fake_exit_ends_event_stream() {
     assert_eq!(p.next_event().await, None);
     assert!(p.play().await.is_err());
 }
+
+#[tokio::test(start_paused = true)]
+async fn fake_overlapping_seeks_report_once() {
+    let (mut p, _remote) =
+        FakePlayer::new(FakeConfig { seek_delay_ms: 300, ..FakeConfig::default() });
+    load(&mut p).await;
+    p.seek(10_000).await.unwrap();
+    p.seek(50_000).await.unwrap();
+    let ev = wait_for(&mut p, |e| matches!(e, PlayerEvent::Seeked { .. })).await;
+    assert_eq!(ev, PlayerEvent::Seeked { position_ms: 50_000 });
+    let more = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(PlayerEvent::Seeked { .. }) = p.next_event().await {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(more.is_err(), "a superseded seek must not report a second Seeked");
+}

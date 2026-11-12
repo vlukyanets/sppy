@@ -124,3 +124,17 @@ fn own_seek_expires_eventually() {
     assert!(f.seek_pending(9_000));
     assert!(!f.seek_pending(10_001));
 }
+
+#[test]
+fn superseded_own_seeks_are_dropped_when_a_later_one_lands() {
+    let mut f = filter();
+    f.issued(0, PendingOp::Seek { target_ms: 10_000 });
+    f.issued(100, PendingOp::Seek { target_ms: 50_000 });
+    // mpv coalesces the two seeks and reports only the last one.
+    assert_eq!(f.observe(300, RawEvent::Seeked { position_ms: 50_000 }, 50_000), Classified::Ours);
+    assert!(!f.seek_pending(301));
+    assert_eq!(
+        f.observe(2_000, RawEvent::Seeked { position_ms: 10_200 }, 10_200),
+        Classified::User(UserAction::Seek { position_ms: 10_200 })
+    );
+}

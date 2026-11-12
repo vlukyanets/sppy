@@ -51,6 +51,8 @@ struct State {
     speed: f64,
     buffering: bool,
     seeking: bool,
+    /// Incremented per seek; only the latest seek reports `Seeked` (like mpv).
+    seek_gen: u64,
     eof_sent: bool,
     base_pos: f64,
     base_at: Instant,
@@ -117,6 +119,7 @@ impl FakePlayer {
             speed: 1.0,
             buffering: false,
             seeking: false,
+            seek_gen: 0,
             eof_sent: false,
             base_pos: 0.0,
             base_at: Instant::now(),
@@ -204,12 +207,17 @@ fn seek(state: &Shared, target: u64) {
         s.base_at = Instant::now();
         s.seeking = true;
         s.eof_sent = false;
-        s.cfg.seek_delay_ms
+        s.seek_gen += 1;
+        (s.cfg.seek_delay_ms, s.seek_gen)
     };
+    let (delay, generation) = delay;
     let state = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(delay)).await;
         let mut s = lock(&state);
+        if s.seek_gen != generation {
+            return;
+        }
         s.seeking = false;
         s.base_at = Instant::now();
         let position_ms = s.base_pos.round() as u64;
