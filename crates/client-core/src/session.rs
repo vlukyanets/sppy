@@ -649,6 +649,8 @@ impl<L: PlayerLauncher> Session<L> {
             || !self.media.file_loaded
             || self.player.is_none()
             || now < self.media.foreign_jump_until
+            // The player cannot move while buffering; long stalls are the server's business.
+            || self.media.buffering
         {
             return;
         }
