@@ -89,8 +89,9 @@ impl Room {
     /// `Bye` or kick: remove immediately.
     pub fn leave(&mut self, now_ms: u64, pid: ParticipantId) -> Vec<Effect> {
         if self.remove_member(pid) {
+            // The notice goes first so clients still know the nickname when rendering it.
             let mut effects =
-                vec![self.broadcast_room(), Self::notice(Some(pid), NoticeAction::Left)];
+                vec![Self::notice(Some(pid), NoticeAction::Left), self.broadcast_room()];
             effects.extend(self.reevaluate_hold(now_ms));
             effects
         } else {

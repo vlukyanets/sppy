@@ -1046,3 +1046,91 @@ mod persist {
         assert!(restored.state().participants.is_empty());
     }
 }
+
+mod review_fixes {
+    use super::*;
+
+    #[test]
+    fn player_closed_survives_item_change_and_does_not_block() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        status(&mut r, 0, g, 1, MediaStatus::PlayerClosed);
+        r.command(10, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(2) });
+        assert_eq!(participant(&r, g).unwrap().status, MediaStatus::PlayerClosed);
+        assert_eq!(r.playback().hold.as_ref().unwrap().waiting_for, vec![h]);
+        status(&mut r, 20, h, 2, ready());
+        assert!(r.playback().hold.is_none());
+    }
+
+    #[test]
+    fn huge_seek_without_duration_does_not_overflow() {
+        let mut r = room();
+        let h = host(&mut r);
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        status(&mut r, 0, h, 1, ready());
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        r.command(10, h, ClientMsg::Seek { req_id: 2, position_ms: u64::MAX });
+        assert!(r.playback().is_playing());
+        let _ = r.playback().expected_position_ms(1_000_000);
+        r.tick(1_000_000);
+        let _ = r.persisted(2_000_000);
+    }
+
+    #[test]
+    fn item_ended_ignored_during_hold_and_at_start() {
+        let mut r = room();
+        let h = host(&mut r);
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(2) });
+        // Hold ItemStart, duration unknown: a stale EOF must not skip item 2.
+        assert!(r.command(100, h, ClientMsg::ItemEnded { item_id: ItemId(2) }).is_empty());
+        status(&mut r, 200, h, 2, ready());
+        assert!(
+            r.command(1_000, h, ClientMsg::ItemEnded { item_id: ItemId(2) }).is_empty(),
+            "too early"
+        );
+        assert_eq!(r.playback().item_id, Some(ItemId(2)));
+    }
+
+    #[test]
+    fn left_and_kicked_notices_come_before_the_room_update() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let effects = r.leave(0, g);
+        let notice = effects
+            .iter()
+            .position(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Event(_) }))
+            .unwrap();
+        let room_update = effects
+            .iter()
+            .position(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Room(_) }))
+            .unwrap();
+        assert!(notice < room_update, "{effects:?}");
+        let g2 = join(&mut r, "guest2");
+        let effects = r.command(0, h, ClientMsg::Kick { req_id: 1, participant_id: g2 });
+        let notice = effects
+            .iter()
+            .position(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Event(_) }))
+            .unwrap();
+        let room_update = effects
+            .iter()
+            .position(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Room(_) }))
+            .unwrap();
+        assert!(notice < room_update, "{effects:?}");
+    }
+}

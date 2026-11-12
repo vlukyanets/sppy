@@ -73,8 +73,8 @@ impl Room {
         }
         let mut effects = vec![
             Effect::Close { to: target, reason: CloseReason::Kicked },
-            self.broadcast_room(),
             Self::notice(Some(pid), NoticeAction::Kicked { participant_id: target }),
+            self.broadcast_room(),
         ];
         effects.extend(self.reevaluate_hold(now_ms));
         effects

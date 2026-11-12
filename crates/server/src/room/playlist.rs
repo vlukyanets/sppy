@@ -183,7 +183,8 @@ impl Room {
                 break;
             }
         }
-        for m in &mut self.members {
+        // A closed player stays closed (and inactive) across item changes.
+        for m in self.members.iter_mut().filter(|m| m.info.status != MediaStatus::PlayerClosed) {
             m.info.status = MediaStatus::Loading;
         }
         self.on_item_changed();

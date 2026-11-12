@@ -12,6 +12,8 @@ const MAX_CHAT_CHARS: usize = 500;
 const PROGRESS_INTERVAL_MS: u64 = 1000;
 /// `ItemEnded` is accepted only this close to the known duration.
 const END_TOLERANCE_MS: u64 = 3000;
+/// With an unknown duration, `ItemEnded` before this position is a stale report.
+const MIN_PLAYED_MS: u64 = 3000;
 
 impl Room {
     pub(super) fn set_status(
@@ -116,7 +118,12 @@ impl Room {
         }
         let expected = self.playback.expected_position_ms(now_ms);
         let duration = self.current_item().and_then(|i| i.duration_ms);
-        if duration.is_some_and(|d| expected + END_TOLERANCE_MS < d) {
+        let too_early = match duration {
+            Some(d) => expected.saturating_add(END_TOLERANCE_MS) < d,
+            // Unknown duration: at least ignore stale EOFs right after an item change.
+            None => expected < MIN_PLAYED_MS,
+        };
+        if self.playback.hold.is_some() || too_early {
             return Vec::new();
         }
         let mut effects = match self.item_after(item_id) {

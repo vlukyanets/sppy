@@ -33,7 +33,7 @@ impl PlaybackState {
             return self.position_ms;
         }
         let elapsed = now_server_ms.saturating_sub(self.at_server_ms) as f64;
-        self.position_ms + (elapsed * self.speed).round() as u64
+        self.position_ms.saturating_add((elapsed * self.speed).round() as u64)
     }
 }
 
