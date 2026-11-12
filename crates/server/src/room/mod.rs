@@ -170,7 +170,7 @@ impl Room {
     }
 
     /// `Denied` followed by a resync of playback and room, to `pid` only.
-    fn denied(&self, pid: ParticipantId, req_id: ReqId, code: ErrorCode) -> Vec<Effect> {
+    pub fn denied(&self, pid: ParticipantId, req_id: ReqId, code: ErrorCode) -> Vec<Effect> {
         vec![
             Effect::Send { to: pid, msg: ServerMsg::Denied { req_id, code } },
             Effect::Send { to: pid, msg: ServerMsg::Playback(self.playback.clone()) },
