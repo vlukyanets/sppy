@@ -17,7 +17,11 @@ async fn single_client_follows_server() {
     let h = host(&server, FakeConfig::default()).await;
     add_and_play(&h, &["u1"]).await;
     eventually("fake playing", 3, || h.launcher.remote().is_some_and(|r| !r.paused())).await;
-    assert!(h.remote().commands().contains(&FakeCmd::Load(MediaSource::Url("fake://u1".into()))));
+    assert!(
+        h.remote()
+            .commands()
+            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u1".into())))
+    );
     eventually("in sync", 5, || h.synced()).await;
     server.shutdown().await;
 }
@@ -97,7 +101,9 @@ async fn item_end_advances_both() {
     let b = guest(&server, "bob", fake).await;
     add_and_play(&a, &["u1", "u2"]).await;
     let loaded_u2 = |p: &Peer| {
-        p.remote().commands().contains(&FakeCmd::Load(MediaSource::Url("fake://u2".into())))
+        p.remote()
+            .commands()
+            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u2".into())))
     };
     eventually("both on item 2", 8, || loaded_u2(&a) && loaded_u2(&b)).await;
     // Item 2 is short and may already have ended: check that it started (hold released).
@@ -117,7 +123,9 @@ async fn player_crash_restarts_once() {
     a.remote().exit(Some(1));
     eventually("relaunched", 3, || a.launcher.launches() == 2).await;
     eventually("reloaded", 3, || {
-        a.remote().commands().contains(&FakeCmd::Load(MediaSource::Url("fake://u1".into())))
+        a.remote()
+            .commands()
+            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u1".into())))
     })
     .await;
     eventually("in sync", 5, || a.synced()).await;

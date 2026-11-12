@@ -101,6 +101,7 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
             );
             let url = app.ui.url.trim().to_owned();
             if ui.add_enabled(!url.is_empty(), egui::Button::new("Add URL")).clicked() {
+                let url = sppy_client_core::media::normalize_url(&url);
                 app.send(UiCommand::PlaylistAdd(vec![Source::Url { url }]));
                 app.ui.url.clear();
             }

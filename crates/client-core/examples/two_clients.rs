@@ -1,7 +1,7 @@
 //! Manual check: an embedded server and two clients, each with its own mpv window.
 //!
 //! ```text
-//! cargo run -p sppy-client-core --example two_clients [-- <media file or URL>]
+//! cargo run -p sppy-client-core --example two_clients [-- <media file>]
 //! ```
 //! Pause or seek in either window; the other one follows. Drift is printed every second.
 //! Without an argument a 5-minute test clip is generated with mpv first. Ctrl-C quits.
@@ -25,27 +25,37 @@ fn drift(h: &ClientHandle) -> String {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let media = match std::env::args().nth(1) {
-        Some(m) => m,
+    let media_dir = dir.path().join("media");
+    std::fs::create_dir_all(&media_dir)?;
+    match std::env::args().nth(1) {
+        Some(file) => {
+            let src = std::path::PathBuf::from(&file);
+            let name = src.file_name().ok_or_else(|| anyhow::anyhow!("not a file: {file}"))?;
+            std::fs::copy(&src, media_dir.join(name))?;
+        }
         None => {
             // lavfi sources are not seekable: encode a real clip.
-            let clip = dir.path().join("clip.mkv");
             println!("generating a test clip…");
             let ok = std::process::Command::new("mpv")
                 .args(["--no-config", "--no-terminal", "--ao=null", "--of=matroska", "--ovc=mpeg4"])
                 .arg("av://lavfi:testsrc=duration=300:size=640x360:rate=25")
-                .arg(format!("--o={}", clip.display()))
+                .arg(format!("--o={}", media_dir.join("clip.mkv").display()))
                 .status()?
                 .success();
             anyhow::ensure!(ok, "mpv could not encode the test clip; pass a media file instead");
-            clip.display().to_string()
         }
+    }
+    let config = ServerConfig {
+        listen: "127.0.0.1:0".parse()?,
+        media: vec![sppy_server::MediaRoot { name: "Media".into(), path: media_dir.clone() }],
+        ..ServerConfig::default()
     };
-    let server = sppy_server::start(
-        ServerConfig { listen: "127.0.0.1:0".parse()?, ..ServerConfig::default() },
-        dir.path().to_path_buf(),
-    )
-    .await?;
+    let server = sppy_server::start(config, dir.path().join("server")).await?;
+    let file_id = std::fs::read_dir(&media_dir)?
+        .flatten()
+        .next()
+        .map(|e| sppy_server::library::file_id("Media", std::path::Path::new(&e.file_name())))
+        .ok_or_else(|| anyhow::anyhow!("no media file"))?;
     let launcher = MpvLauncher(MpvConfig::default());
     let cfg = |nick: &str| ClientConfig { nickname: nick.into(), ..ClientConfig::default() };
     let a = spawn_client(cfg("alice"), launcher.clone());
@@ -62,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    a.commands.send(UiCommand::PlaylistAdd(vec![Source::Url { url: media }]))?;
+    a.commands.send(UiCommand::PlaylistAdd(vec![Source::File { file_id }]))?;
     let mut events = a.subscribe_events();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let started = std::sync::atomic::AtomicBool::new(false);

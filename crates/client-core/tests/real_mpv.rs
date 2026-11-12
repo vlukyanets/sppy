@@ -42,7 +42,16 @@ async fn two_real_mpv_clients_stay_in_sync() {
         eprintln!("mpv not available or cannot encode, skipping");
         return;
     };
-    let server = start_server(dir.path(), test_config()).await;
+    let cfg = sppy_server::ServerConfig {
+        media: vec![sppy_server::MediaRoot {
+            name: "Clips".into(),
+            path: dir.path().to_path_buf(),
+        }],
+        ..test_config()
+    };
+    let server = start_server(&dir.path().join("server"), cfg).await;
+    let file_id = sppy_server::library::file_id("Clips", Path::new("clip.mkv"));
+    let _ = &clip;
     let launcher = MpvLauncher(MpvConfig { headless: true, ..MpvConfig::default() });
     let cfg = |nick: &str| ClientConfig { nickname: nick.into(), ..ClientConfig::default() };
     let a = spawn_client(cfg("a"), launcher.clone());
@@ -60,9 +69,7 @@ async fn two_real_mpv_clients_stay_in_sync() {
             && b.state.borrow().connection == ConnState::Connected
     })
     .await;
-    a.commands
-        .send(UiCommand::PlaylistAdd(vec![Source::Url { url: clip.display().to_string() }]))
-        .unwrap();
+    a.commands.send(UiCommand::PlaylistAdd(vec![Source::File { file_id }])).unwrap();
     wait("ready", 10, || {
         a.state.borrow().playback.as_ref().is_some_and(|p| p.item_id.is_some() && p.hold.is_none())
     })

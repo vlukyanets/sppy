@@ -13,7 +13,7 @@ when `mpv` is not on `PATH`.
 
 ## Manual: two clients on one machine
 
-1. `cargo run -p sppy-client-core --example two_clients` (optionally pass a media file or URL).
+1. `cargo run -p sppy-client-core --example two_clients` (optionally pass a media file).
    This starts an embedded server and two clients, each with its own mpv window, and
    prints the drift of both every second.
 2. Wait for playback to start in both windows. The printed drift should stay within ±80 ms.

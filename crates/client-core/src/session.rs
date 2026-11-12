@@ -669,6 +669,12 @@ impl<L: PlayerLauncher> Session<L> {
             Resolved::Local { path, subtitles } => {
                 (MediaSource::Path(path), subtitles, Delivery::Local)
             }
+            Resolved::Rejected { reason } => {
+                self.media = MediaState { item: Some(id), ..MediaState::default() };
+                self.emit(UiEvent::Error(reason.clone()));
+                self.set_status_forced(MediaStatus::Failed { message: reason });
+                return;
+            }
             Resolved::Wait => {
                 let total = self.item(id).and_then(|i| i.fingerprint).map_or(0, |f| f.size);
                 self.media =
@@ -751,6 +757,11 @@ impl<L: PlayerLauncher> Session<L> {
         if let Some(item_id) = self.media.item {
             self.send(ClientMsg::SetStatus { item_id, status: self.media.status.clone() });
         }
+    }
+
+    fn set_status_forced(&mut self, status: MediaStatus) {
+        self.media.status = status;
+        self.send_status();
     }
 
     fn set_status(&mut self, status: MediaStatus) {

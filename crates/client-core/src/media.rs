@@ -13,6 +13,22 @@ pub enum Resolved {
     Local { path: PathBuf, subtitles: Vec<MediaSource> },
     /// Not playable yet (waiting for a download).
     Wait,
+    /// Refused to open (e.g. not an http(s) URL).
+    Rejected { reason: String },
+}
+
+/// Whether a playlist URL may be opened by the player: only http and https.
+/// Other schemes (local paths, `edl://`, `av://`, `file://`, …) would let any controller
+/// make everyone's player open arbitrary local resources.
+pub fn is_allowed_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+/// What the UI sends for a typed link: `youtube.com/…` becomes `https://youtube.com/…`.
+pub fn normalize_url(input: &str) -> String {
+    let t = input.trim();
+    if t.contains("://") { t.to_owned() } else { format!("https://{t}") }
 }
 
 fn encode_query(v: &str) -> String {
@@ -47,8 +63,8 @@ pub fn stream_source(base: &str, item: &Item, session_token: &str) -> Resolved {
                 .map(|s| MediaSource::Url(subtitle_url(base, &file_id.0, s.index, session_token)))
                 .collect(),
         },
-        Source::Url { url } if !url.contains("://") => {
-            Resolved::Local { path: PathBuf::from(url), subtitles: Vec::new() }
+        Source::Url { url } if !is_allowed_url(url) => {
+            Resolved::Rejected { reason: format!("Only http(s) links can be played: {url}") }
         }
         Source::Url { url } => {
             Resolved::Stream { media: MediaSource::Url(url.clone()), subtitles: Vec::new() }
@@ -103,10 +119,26 @@ mod tests {
     }
 
     #[test]
-    fn schemeless_url_is_local_path() {
-        let r =
-            stream_source("http://h:1", &item(Source::Url { url: "/srv/a.mkv".into() }, 0), "t");
-        assert_eq!(r, Resolved::Local { path: "/srv/a.mkv".into(), subtitles: vec![] });
+    fn only_http_urls_are_opened() {
+        for bad in [
+            "/srv/a.mkv",
+            "youtube.com/watch?v=x",
+            "edl://a.mkv",
+            "av://lavfi:testsrc",
+            "file:///etc/passwd",
+        ] {
+            let r = stream_source("http://h:1", &item(Source::Url { url: bad.into() }, 0), "t");
+            assert!(matches!(r, Resolved::Rejected { .. }), "{bad}: {r:?}");
+        }
+        let ok =
+            stream_source("http://h:1", &item(Source::Url { url: "HTTP://x/y".into() }, 0), "t");
+        assert!(matches!(ok, Resolved::Stream { .. }));
+    }
+
+    #[test]
+    fn normalize_url_adds_https() {
+        assert_eq!(normalize_url("youtube.com/watch?v=x"), "https://youtube.com/watch?v=x");
+        assert_eq!(normalize_url("  http://a/b "), "http://a/b");
     }
 
     #[test]
