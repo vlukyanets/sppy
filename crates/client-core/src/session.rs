@@ -533,8 +533,8 @@ impl<L: PlayerLauncher> Session<L> {
                         item_id: item.item_id,
                         delivery: Delivery::Download { bytes, total },
                     });
-                    if total > 0 {
-                        self.osd(&format!("Downloading {}%", bytes * 100 / total)).await;
+                    if let Some(percent) = (bytes * 100).checked_div(total) {
+                        self.osd(&format!("Downloading {percent}%")).await;
                     }
                 }
             }
