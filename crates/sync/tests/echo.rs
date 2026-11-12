@@ -42,8 +42,8 @@ fn mismatched_pause_value_is_user() {
 #[test]
 fn own_seek_is_ours() {
     let mut f = filter();
-    f.issued(0, PendingOp::Seek);
-    assert_eq!(f.observe(300, RawEvent::Seeked { position_ms: 9000 }, 9000), Classified::Ours);
+    f.issued(0, PendingOp::Seek { target_ms: 9000 });
+    assert_eq!(f.observe(300, RawEvent::Seeked { position_ms: 9040 }, 9040), Classified::Ours);
 }
 
 #[test]
@@ -86,8 +86,30 @@ fn own_speed_is_ours_foreign_speed_reverted() {
 #[test]
 fn several_pending_ops_matched_independently() {
     let mut f = filter();
-    f.issued(0, PendingOp::Seek);
+    f.issued(0, PendingOp::Seek { target_ms: 1 });
     f.issued(0, PendingOp::Pause(false));
     assert_eq!(f.observe(5, RawEvent::Pause(false), 0), Classified::Ours);
     assert_eq!(f.observe(200, RawEvent::Seeked { position_ms: 1 }, 1), Classified::Ours);
+}
+
+#[test]
+fn user_seek_elsewhere_while_own_seek_pending() {
+    let mut f = filter();
+    f.issued(0, PendingOp::Seek { target_ms: 10_000 });
+    // The user's seek to 5 min lands first: not ours.
+    assert_eq!(
+        f.observe(50, RawEvent::Seeked { position_ms: 300_000 }, 300_000),
+        Classified::User(UserAction::Seek { position_ms: 300_000 })
+    );
+    // Our own seek lands afterwards and is still recognized.
+    assert_eq!(f.observe(150, RawEvent::Seeked { position_ms: 10_010 }, 10_010), Classified::Ours);
+}
+
+#[test]
+fn seek_pending_reports_own_seeks_only_until_timeout() {
+    let mut f = filter();
+    assert!(!f.seek_pending(0));
+    f.issued(0, PendingOp::Seek { target_ms: 5 });
+    assert!(f.seek_pending(500));
+    assert!(!f.seek_pending(1001));
 }

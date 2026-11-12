@@ -4,7 +4,10 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PendingOp {
     Pause(bool),
-    Seek,
+    /// Our seek lands within [`SEEK_MATCH_MS`] of `target_ms`.
+    Seek {
+        target_ms: u64,
+    },
     Speed(f64),
     /// Loading a file: everything is ignored until `load_finished`.
     Load,
@@ -39,6 +42,8 @@ pub enum Classified {
 }
 
 const SPEED_EPS: f64 = 0.001;
+/// A `Seeked` event this close to a pending seek target is our own.
+pub const SEEK_MATCH_MS: u64 = 1000;
 
 #[derive(Debug, Clone)]
 pub struct EchoFilter {
@@ -65,6 +70,13 @@ impl EchoFilter {
         self.loading = false;
     }
 
+    /// Whether one of our own seeks is still in flight.
+    pub fn seek_pending(&self, now_ms: u64) -> bool {
+        self.pending.iter().any(|(t, op)| {
+            matches!(op, PendingOp::Seek { .. }) && now_ms.saturating_sub(*t) <= self.timeout_ms
+        })
+    }
+
     pub fn is_loading(&self) -> bool {
         self.loading
     }
@@ -77,7 +89,9 @@ impl EchoFilter {
         self.pending.retain(|(t, _)| now_ms.saturating_sub(*t) <= timeout);
         let matches = |op: &PendingOp| match (op, ev) {
             (PendingOp::Pause(a), RawEvent::Pause(b)) => *a == b,
-            (PendingOp::Seek, RawEvent::Seeked { .. }) => true,
+            (PendingOp::Seek { target_ms }, RawEvent::Seeked { position_ms }) => {
+                target_ms.abs_diff(position_ms) <= SEEK_MATCH_MS
+            }
             (PendingOp::Speed(a), RawEvent::Speed(b)) => (a - b).abs() < SPEED_EPS,
             _ => false,
         };

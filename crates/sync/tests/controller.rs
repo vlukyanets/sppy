@@ -152,3 +152,35 @@ fn reset_settle_blocks_corrections() {
     assert!(k.update(500, &target(10_000), &obs(10_500, 1.0)).is_empty());
     assert!(!k.update(1000, &target(10_000), &obs(10_500, 1.0)).is_empty());
 }
+
+#[test]
+fn play_mismatch_ignores_settle() {
+    let mut k = ctl();
+    k.reset_settle(0); // e.g. the file just loaded
+    let c = k.update(100, &target(100), &Observed { position_ms: 0, paused: true, speed: 1.0 });
+    assert!(c.contains(&Correction::Play), "{c:?}");
+}
+
+#[test]
+fn pause_mismatch_ignores_settle() {
+    let mut k = ctl();
+    k.reset_settle(0);
+    let t = Target { position_ms: 5_000, playing: false, room_speed: 1.0 };
+    let c = k.update(100, &t, &obs(5_000, 1.0));
+    assert!(c.contains(&Correction::Pause), "{c:?}");
+}
+
+#[test]
+fn play_from_pause_seeks_when_drifted() {
+    let mut k = ctl();
+    let c = k.update(0, &target(1_200), &Observed { position_ms: 0, paused: true, speed: 1.0 });
+    assert!(c.contains(&Correction::Play), "{c:?}");
+    assert!(c.contains(&Correction::Seek { position_ms: 1_200 }), "{c:?}");
+}
+
+#[test]
+fn play_from_pause_no_seek_when_close() {
+    let mut k = ctl();
+    let c = k.update(0, &target(50), &Observed { position_ms: 0, paused: true, speed: 1.0 });
+    assert_eq!(c, vec![Correction::Play]);
+}

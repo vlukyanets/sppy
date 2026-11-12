@@ -69,18 +69,35 @@ impl DriftController {
 
     pub fn update(&mut self, now_ms: u64, target: &Target, observed: &Observed) -> Vec<Correction> {
         let mut out = Vec::new();
-        if now_ms < self.settle_until {
-            return out;
-        }
         let drift = observed.position_ms as i64 - target.position_ms as i64;
         let abs = drift.unsigned_abs();
         let current_speed = self.commanded_speed.unwrap_or(observed.speed);
 
+        // Play/pause state is corrected immediately, even while settling.
+        if target.playing && observed.paused {
+            if self.may_send_pause(false, now_ms) {
+                out.push(Correction::Play);
+                // Starting playback: a seek now is invisible, so fix any drift right away.
+                if abs > self.p.dead_band_ms {
+                    out.push(Correction::Seek {
+                        position_ms: target.position_ms + self.seek_lead_ms,
+                    });
+                    self.seek_issued = true;
+                }
+                self.settle_until = now_ms + self.p.settle_ms;
+                self.correcting = false;
+            }
+            return out;
+        }
+        if !target.playing && !observed.paused && self.may_send_pause(true, now_ms) {
+            out.push(Correction::Pause);
+        }
+        if now_ms < self.settle_until {
+            return out;
+        }
+
         if !target.playing {
             self.correcting = false;
-            if !observed.paused && self.may_send_pause(true, now_ms) {
-                out.push(Correction::Pause);
-            }
             if (current_speed - target.room_speed).abs() > SPEED_EPS {
                 self.set_speed(target.room_speed, &mut out);
             }
@@ -88,19 +105,6 @@ impl DriftController {
                 out.push(Correction::Seek { position_ms: target.position_ms });
                 self.settle_until = now_ms + self.p.settle_ms;
             }
-            return out;
-        }
-
-        if observed.paused {
-            if self.may_send_pause(false, now_ms) {
-                out.push(Correction::Play);
-            }
-            if abs > self.p.seek_threshold_ms {
-                out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
-                self.seek_issued = true;
-            }
-            self.settle_until = now_ms + self.p.settle_ms;
-            self.correcting = false;
             return out;
         }
 
