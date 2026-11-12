@@ -15,9 +15,10 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
 use crate::api::{ConnState, Snapshot, UiCommand, UiEvent};
+use crate::cache::MediaCache;
 use crate::config::{ClientConfig, DeliveryMode};
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
-use crate::download::{DownloadEvent, DownloadJob, Downloader, Priority, part_path};
+use crate::download::{DownloadEvent, DownloadJob, Downloader, Priority};
 use crate::link::{ServerAddress, parse_address};
 use crate::media::{Resolved, file_url, stream_source, subtitle_url};
 use crate::notice::{nickname, render_notice};
@@ -99,6 +100,7 @@ pub(crate) struct Session<L: PlayerLauncher> {
     dl_rx: mpsc::UnboundedReceiver<DownloadEvent>,
     /// Items whose download failed: streamed instead.
     stream_fallback: std::collections::HashSet<ItemId>,
+    cache: MediaCache,
 }
 
 async fn next_conn_event(conn: &mut Option<ConnectionHandle>) -> Option<ConnEvent> {
@@ -124,7 +126,12 @@ impl<L: PlayerLauncher> Session<L> {
         events_tx: broadcast::Sender<UiEvent>,
     ) -> Self {
         let controller = DriftController::new(config.advanced.clone());
-        let snap = state_tx.borrow().clone();
+        let mut snap = state_tx.borrow().clone();
+        snap.local.cache_used_bytes = MediaCache::new(config.media_cache_dir(), 0).used_bytes();
+        let cache = MediaCache::new(
+            config.media_cache_dir(),
+            config.cache_limit_gb.saturating_mul(1 << 30),
+        );
         let client = reqwest::Client::new();
         let (downloader, dl_rx) = if config.download_backoff_ms.is_empty() {
             Downloader::spawn(client)
@@ -155,6 +162,7 @@ impl<L: PlayerLauncher> Session<L> {
             downloader,
             dl_rx,
             stream_fallback: Default::default(),
+            cache,
         }
     }
 
@@ -284,7 +292,13 @@ impl<L: PlayerLauncher> Session<L> {
                 self.config.mode = mode;
                 self.snap.local.mode = mode;
             }
-            UiCommand::ChooseLocalFile { .. } | UiCommand::ClearCache => {
+            UiCommand::ClearCache => {
+                if let Err(e) = self.cache.clear(&self.protected_files()) {
+                    self.emit(UiEvent::Error(format!("Cannot clear the cache: {e}")));
+                }
+                self.snap.local.cache_used_bytes = self.cache.used_bytes();
+            }
+            UiCommand::ChooseLocalFile { .. } => {
                 tracing::warn!("not supported yet: {cmd:?}");
             }
         }
@@ -422,6 +436,7 @@ impl<L: PlayerLauncher> Session<L> {
         if wanted == self.media.item || self.player.is_none() {
             return;
         }
+        self.cancel_stale_download(wanted);
         let Some(id) = wanted else {
             self.media = MediaState::default();
             return;
@@ -440,13 +455,76 @@ impl<L: PlayerLauncher> Session<L> {
         file_id: &FileId,
         item: &Item,
     ) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
-        let dir = self.config.media_cache_dir();
+        let dir = self.cache.dir();
         let subs = item
             .subtitles
             .iter()
             .map(|s| dir.join(format!("{}.sub{}.{}", file_id.0, s.index, s.ext)))
             .collect();
-        (dir.join(&file_id.0), subs)
+        (self.cache.path_for(file_id), subs)
+    }
+
+    /// Library files referenced by the playlist (never evicted).
+    fn protected_files(&self) -> std::collections::HashSet<FileId> {
+        self.snap
+            .room
+            .iter()
+            .flat_map(|r| r.playlist.iter())
+            .filter_map(|i| match &i.source {
+                Source::File { file_id } => Some(file_id.clone()),
+                Source::Url { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Stop downloading an item that is no longer current (the `.part` stays for later).
+    fn cancel_stale_download(&mut self, wanted: Option<ItemId>) {
+        if !self.media.downloading || self.media.item == wanted {
+            return;
+        }
+        if let Some(Source::File { file_id }) =
+            self.media.item.and_then(|i| self.item(i)).map(|i| i.source)
+        {
+            self.downloader.cancel(&file_id);
+        }
+    }
+
+    fn download_job(&self, item: &Item, file_id: &FileId) -> Option<DownloadJob> {
+        let (base, token) = (self.http_base.as_ref()?, self.session_token.as_ref()?);
+        let (dest, subs) = self.cache_paths(file_id, item);
+        let subs = item
+            .subtitles
+            .iter()
+            .zip(subs)
+            .map(|(s, path)| (subtitle_url(base, &file_id.0, s.index, token), path))
+            .collect();
+        Some(DownloadJob {
+            file_id: file_id.clone(),
+            url: file_url(base, &file_id.0, token),
+            dest,
+            subs,
+            total_hint: item.fingerprint.as_ref().map(|f| f.size),
+        })
+    }
+
+    /// Preload mode: fetch the item after the current one in the background.
+    fn maybe_prefetch(&self) {
+        if !self.config.prefetch_next || self.config.mode != DeliveryMode::Preload {
+            return;
+        }
+        let Some(next) = self.media.item.and_then(|id| {
+            let list = &self.snap.room.as_ref()?.playlist;
+            let pos = list.iter().position(|i| i.item_id == id)?;
+            list.get(pos + 1).cloned()
+        }) else {
+            return;
+        };
+        if let Source::File { file_id } = &next.source
+            && self.cache.complete(file_id).is_none()
+            && let Some(job) = self.download_job(&next, file_id)
+        {
+            self.downloader.enqueue(job, Priority::Prefetch);
+        }
     }
 
     /// Decide how the item reaches the player: cache, download (Wait) or stream.
@@ -456,27 +534,13 @@ impl<L: PlayerLauncher> Session<L> {
             && self.config.mode == DeliveryMode::Preload
             && !self.stream_fallback.contains(&item.item_id)
         {
-            let (dest, subs) = self.cache_paths(file_id, item);
-            if dest.is_file() && !part_path(&dest).exists() {
+            let (_, subs) = self.cache_paths(file_id, item);
+            if let Some(path) = self.cache.complete(file_id) {
+                self.cache.touch(file_id);
                 let subtitles = subs.into_iter().filter(|p| p.is_file()).collect();
-                return Some(Resolved::Local { path: dest, subtitles });
+                return Some(Resolved::Local { path, subtitles });
             }
-            let sub_jobs = item
-                .subtitles
-                .iter()
-                .zip(subs)
-                .map(|(s, path)| (subtitle_url(base, &file_id.0, s.index, token), path))
-                .collect();
-            self.downloader.enqueue(
-                DownloadJob {
-                    file_id: file_id.clone(),
-                    url: file_url(base, &file_id.0, token),
-                    dest,
-                    subs: sub_jobs,
-                    total_hint: item.fingerprint.as_ref().map(|f| f.size),
-                },
-                Priority::Current,
-            );
+            self.downloader.enqueue(self.download_job(item, file_id)?, Priority::Current);
             return Some(Resolved::Wait);
         }
         Some(stream_source(base, item, token))
@@ -515,7 +579,11 @@ impl<L: PlayerLauncher> Session<L> {
             tracing::warn!("load failed: {e}");
         }
         self.send_status();
+        let local = delivery == Delivery::Local;
         self.send(ClientMsg::Progress { item_id: id, delivery });
+        if local {
+            self.maybe_prefetch();
+        }
     }
 
     /// The current item if it is the library file `file_id` and we are waiting for its download.
@@ -539,6 +607,10 @@ impl<L: PlayerLauncher> Session<L> {
                 }
             }
             DownloadEvent::Done { file_id } => {
+                if let Err(e) = self.cache.evict(&self.protected_files()) {
+                    tracing::warn!("cache eviction failed: {e}");
+                }
+                self.snap.local.cache_used_bytes = self.cache.used_bytes();
                 if let Some(item) = self.downloading_item(&file_id)
                     && let Some(resolved) = self.resolve(&item)
                 {

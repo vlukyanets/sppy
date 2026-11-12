@@ -119,3 +119,33 @@ async fn preload_failure_falls_back_to_stream() {
     assert!(saw_notice, "everyone sees the fallback notice");
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn prefetches_next_item_and_clear_cache_keeps_playlist_files() {
+    let (dir, media, cache) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::write(media.path().join("Next.mkv"), b"next file").unwrap();
+    let server = media_server(dir.path(), media.path()).await;
+    let next = sppy_server::library::file_id("Movies", Path::new("Next.mkv"));
+    let h = host_with(&server, FakeConfig::default(), preload_config(cache.path())).await;
+    h.send(UiCommand::PlaylistAdd(vec![
+        Source::File { file_id: movie() },
+        Source::File { file_id: next.clone() },
+    ]));
+    let next_path = cache.path().join("media").join(&next.0);
+    eventually("next item prefetched", 5, || next_path.is_file()).await;
+    assert_eq!(std::fs::read(&next_path).unwrap(), b"next file");
+    eventually("cache usage reported", 5, || snap(&h.handle).local.cache_used_bytes > 50_000).await;
+
+    // Files of the playlist survive "Clear cache"; others are deleted.
+    h.send(UiCommand::ClearCache);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(next_path.is_file());
+    h.send(UiCommand::PlaylistRemove(ItemId(2)));
+    eventually("item removed", 5, || snap(&h.handle).room.is_some_and(|r| r.playlist.len() == 1))
+        .await;
+    h.send(UiCommand::ClearCache);
+    eventually("next deleted", 5, || !next_path.exists()).await;
+    assert!(cache.path().join("media").join(&movie().0).is_file());
+    server.shutdown().await;
+}
