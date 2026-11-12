@@ -24,6 +24,30 @@ when `mpv` is not on `PATH`.
 7. Kill one mpv process (`kill -9`) → it is restarted once and catches up.
 8. Press Ctrl-C → both clients get "The server is shutting down".
 
+## Manual: the app (two instances on one machine)
+
+Run each instance with its own home so they do not share config and cache:
+`SPPY_HOME=/tmp/sppy-a cargo run -p sppy-app` and `SPPY_HOME=/tmp/sppy-b cargo run -p sppy-app`.
+
+1. A: Settings → Hosting → add a media folder (with a video and a `.srt` next to it), Save,
+   **Become host**, **Copy invite link**.
+2. B: paste the link, nickname, **Connect**. Both list two participants.
+3. A: Library → `+` a file; Playlist shows it; both mpv windows load it; **Play**.
+4. Subtitles appear in both players.
+5. Reorder (▲▼), add a second file, double-click it → both switch; remove an item.
+6. Chat in both directions; messages and notices also appear as OSD in mpv.
+7. A: Host → *Only the host*; B pauses in mpv → it snaps back with "No permission…".
+   Switch to *Selected participants*, tick `ctrl` for B → B can pause again.
+8. B: switch to **Preload**, select another item → progress bar in Participants, then
+   playback from the cache. Settings shows the cache size; **Clear cache** keeps playlist files.
+9. B: Settings → My media folders → add a folder containing a renamed copy of a library
+   file → that item plays from the local copy (Participants shows `local`).
+10. Long stall: throttle B (e.g. `--cache-secs=1` in extra args plus a slow link, or
+    `tc qdisc add dev lo root netem rate 1mbit`) → after 10 s everyone waits for B and
+    resumes once B has buffered.
+11. A: Kick B (with confirmation) → B sees "You were removed from the room".
+12. Close A's window → B shows "Server unavailable, reconnecting".
+
 ## Manual: headless server over Tailscale
 
 1. On the server: create `~/.config/sppy/server.toml` with a `[[media]]` folder, run
