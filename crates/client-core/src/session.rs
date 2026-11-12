@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use sppy_player::{MediaSource, Player, PlayerEvent, PlayerLauncher};
 use sppy_proto::{
-    ClientMsg, CloseReason, Delivery, ErrorCode, Event, ItemId, MediaStatus, PlaybackState, ReqId,
-    ServerMsg,
+    ClientMsg, CloseReason, Delivery, ErrorCode, Event, FileId, Item, ItemId, MediaStatus,
+    PlaybackState, ReqId, ServerMsg, Source,
 };
 use sppy_sync::{
     Classified, Correction, DriftController, EchoFilter, Observed, PendingOp, RawEvent, Target,
@@ -15,10 +15,11 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
 use crate::api::{ConnState, Snapshot, UiCommand, UiEvent};
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, DeliveryMode};
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
+use crate::download::{DownloadEvent, DownloadJob, Downloader, Priority, part_path};
 use crate::link::{ServerAddress, parse_address};
-use crate::media::{Resolved, stream_source};
+use crate::media::{Resolved, file_url, stream_source, subtitle_url};
 use crate::notice::{nickname, render_notice};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -45,6 +46,8 @@ struct MediaState {
     cache_ms: u64,
     cache_eof: bool,
     local: bool,
+    /// Waiting for a preload download of this item.
+    downloading: bool,
     /// A position jump we did not cause: probably the user seeking; hold corrections until then.
     foreign_jump_until: u64,
     duration_ms: Option<u64>,
@@ -65,6 +68,7 @@ impl Default for MediaState {
             cache_ms: 0,
             cache_eof: false,
             local: false,
+            downloading: false,
             foreign_jump_until: 0,
             duration_ms: None,
             title: None,
@@ -91,6 +95,10 @@ pub(crate) struct Session<L: PlayerLauncher> {
     next_req: ReqId,
     awaiting: Option<(ReqId, u64)>,
     media: MediaState,
+    downloader: Downloader,
+    dl_rx: mpsc::UnboundedReceiver<DownloadEvent>,
+    /// Items whose download failed: streamed instead.
+    stream_fallback: std::collections::HashSet<ItemId>,
 }
 
 async fn next_conn_event(conn: &mut Option<ConnectionHandle>) -> Option<ConnEvent> {
@@ -117,6 +125,15 @@ impl<L: PlayerLauncher> Session<L> {
     ) -> Self {
         let controller = DriftController::new(config.advanced.clone());
         let snap = state_tx.borrow().clone();
+        let client = reqwest::Client::new();
+        let (downloader, dl_rx) = if config.download_backoff_ms.is_empty() {
+            Downloader::spawn(client)
+        } else {
+            Downloader::with_backoff(
+                client,
+                config.download_backoff_ms.iter().map(|ms| Duration::from_millis(*ms)).collect(),
+            )
+        };
         Session {
             snap,
             config,
@@ -135,6 +152,9 @@ impl<L: PlayerLauncher> Session<L> {
             next_req: 0,
             awaiting: None,
             media: MediaState::default(),
+            downloader,
+            dl_rx,
+            stream_fallback: Default::default(),
         }
     }
 
@@ -149,6 +169,7 @@ impl<L: PlayerLauncher> Session<L> {
                 },
                 ev = next_conn_event(&mut self.conn) => self.on_conn_event(ev).await,
                 ev = next_player_event(&mut self.player) => self.on_player_event(ev).await,
+                ev = self.dl_rx.recv() => if let Some(ev) = ev { self.on_download_event(ev).await },
                 _ = tick.tick() => self.on_tick().await,
             }
             self.publish();
@@ -405,24 +426,82 @@ impl<L: PlayerLauncher> Session<L> {
             self.media = MediaState::default();
             return;
         };
-        let Some(item) = self
-            .snap
-            .room
-            .as_ref()
-            .and_then(|r| r.playlist.iter().find(|i| i.item_id == id))
-            .cloned()
-        else {
-            return;
-        };
-        let (Some(base), Some(token)) = (&self.http_base, &self.session_token) else { return };
-        let (media, subs, delivery) = match stream_source(base, &item, token) {
+        let Some(item) = self.item(id) else { return };
+        let Some(resolved) = self.resolve(&item) else { return };
+        self.start_item(id, resolved).await;
+    }
+
+    fn item(&self, id: ItemId) -> Option<Item> {
+        self.snap.room.as_ref()?.playlist.iter().find(|i| i.item_id == id).cloned()
+    }
+
+    fn cache_paths(
+        &self,
+        file_id: &FileId,
+        item: &Item,
+    ) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+        let dir = self.config.media_cache_dir();
+        let subs = item
+            .subtitles
+            .iter()
+            .map(|s| dir.join(format!("{}.sub{}.{}", file_id.0, s.index, s.ext)))
+            .collect();
+        (dir.join(&file_id.0), subs)
+    }
+
+    /// Decide how the item reaches the player: cache, download (Wait) or stream.
+    fn resolve(&self, item: &Item) -> Option<Resolved> {
+        let (base, token) = (self.http_base.as_ref()?, self.session_token.as_ref()?);
+        if let Source::File { file_id } = &item.source
+            && self.config.mode == DeliveryMode::Preload
+            && !self.stream_fallback.contains(&item.item_id)
+        {
+            let (dest, subs) = self.cache_paths(file_id, item);
+            if dest.is_file() && !part_path(&dest).exists() {
+                let subtitles = subs.into_iter().filter(|p| p.is_file()).collect();
+                return Some(Resolved::Local { path: dest, subtitles });
+            }
+            let sub_jobs = item
+                .subtitles
+                .iter()
+                .zip(subs)
+                .map(|(s, path)| (subtitle_url(base, &file_id.0, s.index, token), path))
+                .collect();
+            self.downloader.enqueue(
+                DownloadJob {
+                    file_id: file_id.clone(),
+                    url: file_url(base, &file_id.0, token),
+                    dest,
+                    subs: sub_jobs,
+                    total_hint: item.fingerprint.as_ref().map(|f| f.size),
+                },
+                Priority::Current,
+            );
+            return Some(Resolved::Wait);
+        }
+        Some(stream_source(base, item, token))
+    }
+
+    async fn start_item(&mut self, id: ItemId, resolved: Resolved) {
+        let (media, subs, delivery) = match resolved {
             Resolved::Stream { media, subtitles } => (media, subtitles, Delivery::Stream),
             Resolved::Local { path, subtitles } => (
                 MediaSource::Path(path),
                 subtitles.into_iter().map(MediaSource::Path).collect(),
                 Delivery::Local,
             ),
-            Resolved::Wait => return,
+            Resolved::Wait => {
+                let total = self.item(id).and_then(|i| i.fingerprint).map_or(0, |f| f.size);
+                self.media =
+                    MediaState { item: Some(id), downloading: true, ..MediaState::default() };
+                self.send_status();
+                self.send(ClientMsg::Progress {
+                    item_id: id,
+                    delivery: Delivery::Download { bytes: 0, total },
+                });
+                self.osd("Downloading…").await;
+                return;
+            }
         };
         self.media = MediaState {
             item: Some(id),
@@ -437,6 +516,45 @@ impl<L: PlayerLauncher> Session<L> {
         }
         self.send_status();
         self.send(ClientMsg::Progress { item_id: id, delivery });
+    }
+
+    /// The current item if it is the library file `file_id` and we are waiting for its download.
+    fn downloading_item(&self, file_id: &FileId) -> Option<Item> {
+        let item = self.item(self.media.item?)?;
+        let matches = matches!(&item.source, Source::File { file_id: f } if f == file_id);
+        (matches && self.media.downloading).then_some(item)
+    }
+
+    async fn on_download_event(&mut self, ev: DownloadEvent) {
+        match ev {
+            DownloadEvent::Progress { file_id, bytes, total } => {
+                if let Some(item) = self.downloading_item(&file_id) {
+                    self.send(ClientMsg::Progress {
+                        item_id: item.item_id,
+                        delivery: Delivery::Download { bytes, total },
+                    });
+                    if total > 0 {
+                        self.osd(&format!("Downloading {}%", bytes * 100 / total)).await;
+                    }
+                }
+            }
+            DownloadEvent::Done { file_id } => {
+                if let Some(item) = self.downloading_item(&file_id)
+                    && let Some(resolved) = self.resolve(&item)
+                {
+                    self.start_item(item.item_id, resolved).await;
+                }
+            }
+            DownloadEvent::Failed { file_id, attempts } => {
+                if let Some(item) = self.downloading_item(&file_id) {
+                    tracing::warn!("download failed after {attempts} attempts; streaming instead");
+                    self.stream_fallback.insert(item.item_id);
+                    if let Some(resolved) = self.resolve(&item) {
+                        self.start_item(item.item_id, resolved).await;
+                    }
+                }
+            }
+        }
     }
 
     fn send_status(&self) {

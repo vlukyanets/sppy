@@ -48,6 +48,10 @@ pub struct ClientConfig {
     pub advanced: SyncParams,
     /// Embedded server ("Become host").
     pub host: ServerConfig,
+    /// Undocumented: pauses between download attempts (empty = defaults); tests shorten it.
+    #[doc(hidden)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub download_backoff_ms: Vec<u64>,
 }
 
 impl Default for ClientConfig {
@@ -63,6 +67,7 @@ impl Default for ClientConfig {
             player: PlayerConfig::default(),
             advanced: SyncParams::default(),
             host: ServerConfig::default(),
+            download_backoff_ms: Vec::new(),
         }
     }
 }
@@ -76,6 +81,11 @@ pub enum ConfigError {
 }
 
 impl ClientConfig {
+    /// Where downloaded media is kept.
+    pub fn media_cache_dir(&self) -> PathBuf {
+        self.cache_dir.clone().unwrap_or_else(|| client_paths().cache_dir).join("media")
+    }
+
     /// Load the config; a missing file gives the defaults.
     pub fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {

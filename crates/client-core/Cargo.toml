@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+reqwest.workspace = true
 sppy-proto.workspace = true
 sppy-sync.workspace = true
 sppy-common.workspace = true
@@ -19,7 +20,9 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-reqwest.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
 sppy-server.workspace = true
 sppy-player = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }

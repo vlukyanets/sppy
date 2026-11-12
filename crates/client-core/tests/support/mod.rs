@@ -50,8 +50,12 @@ impl Peer {
 }
 
 pub async fn host(server: &ServerHandle, fake: FakeConfig) -> Peer {
+    host_with(server, fake, config("host")).await
+}
+
+pub async fn host_with(server: &ServerHandle, fake: FakeConfig, cfg: ClientConfig) -> Peer {
     let launcher = FakeLauncher::new(fake);
-    let handle = spawn_client(config("host"), launcher.clone());
+    let handle = spawn_client(cfg, launcher.clone());
     handle
         .commands
         .send(UiCommand::BecomeHostConnect {
