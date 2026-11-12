@@ -83,6 +83,8 @@ pub struct Snapshot {
     pub library: Option<Vec<LibraryNode>>,
     pub invite_token: Option<String>,
     pub player_open: bool,
+    /// The local player's position (extrapolated), once a file is loaded.
+    pub player_position_ms: Option<u64>,
     pub chat_history: Vec<ChatMessage>,
     pub local: LocalStatus,
     /// `server_time − local_time` relative to [`ClientHandle::epoch`].

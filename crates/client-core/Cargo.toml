@@ -23,3 +23,4 @@ sppy-server.workspace = true
 sppy-player = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
+anyhow.workspace = true

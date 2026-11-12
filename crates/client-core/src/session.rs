@@ -159,6 +159,8 @@ impl<L: PlayerLauncher> Session<L> {
     }
 
     fn publish(&mut self) {
+        let now = self.local_ms();
+        self.snap.player_position_ms = self.media.file_loaded.then(|| self.observed_position(now));
         self.snap.server_offset_ms =
             self.conn.as_ref().and_then(|c| c.clock.lock().expect("clock").offset_ms());
         self.state_tx.send_replace(self.snap.clone());
@@ -412,6 +414,10 @@ impl<L: PlayerLauncher> Session<L> {
             return;
         };
         let (media, subs, delivery) = match &item.source {
+            // A "URL" without a scheme is a local path: no network cache to wait for.
+            Source::Url { url } if !url.contains("://") => {
+                (MediaSource::Path(url.into()), Vec::new(), Delivery::Local)
+            }
             Source::Url { url } => (MediaSource::Url(url.clone()), Vec::new(), Delivery::Stream),
             Source::File { file_id } => {
                 let (Some(base), Some(token)) = (&self.http_base, &self.session_token) else {
@@ -431,7 +437,11 @@ impl<L: PlayerLauncher> Session<L> {
                 (media, subs, Delivery::Stream)
             }
         };
-        self.media = MediaState { item: Some(id), ..MediaState::default() };
+        self.media = MediaState {
+            item: Some(id),
+            local: matches!(media, MediaSource::Path(_)),
+            ..MediaState::default()
+        };
         self.echo.issued(self.local_ms(), PendingOp::Load);
         if let Some(p) = &mut self.player
             && let Err(e) = p.load(media, subs).await

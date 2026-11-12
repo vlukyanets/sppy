@@ -75,7 +75,7 @@ pub async fn guest(server: &ServerHandle, nick: &str, fake: FakeConfig) -> Peer 
 }
 
 pub fn url(u: &str) -> Source {
-    Source::Url { url: u.into() }
+    Source::Url { url: format!("fake://{u}") }
 }
 
 pub fn is_playing(p: &Peer) -> bool {
