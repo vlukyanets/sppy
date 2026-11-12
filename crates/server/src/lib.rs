@@ -27,6 +27,8 @@ use crate::clock::ServerClock;
 use crate::hub::{Hub, HubInput, SharedTokens};
 use crate::room::Room;
 
+const HTTP_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A running server. Dropping it does not stop the server; call [`ServerHandle::shutdown`].
 pub struct ServerHandle {
     pub local_addr: SocketAddr,
@@ -49,7 +51,13 @@ impl ServerHandle {
             let _ = done_rx.await;
         }
         let _ = self.stop_http.send(());
-        let _ = self.http_task.await;
+        // Open media streams (a player holding a Range response) would keep a graceful
+        // shutdown waiting forever: give them a moment, then stop listening anyway.
+        let mut http_task = self.http_task;
+        if tokio::time::timeout(HTTP_SHUTDOWN_GRACE, &mut http_task).await.is_err() {
+            tracing::info!("open connections did not finish; stopping the HTTP server");
+            http_task.abort();
+        }
     }
 }
 

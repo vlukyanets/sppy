@@ -172,3 +172,25 @@ async fn rescan_by_host_finds_new_files_guest_denied() {
     g.recv_until(found).await;
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn shutdown_does_not_hang_on_an_open_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    let media = tempfile::tempdir().unwrap();
+    std::fs::write(media.path().join("Big.mkv"), vec![0u8; 64 * 1024 * 1024]).unwrap();
+    let cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        ..test_config()
+    };
+    let server = start_server(dir.path(), cfg).await;
+    let (_c, w) =
+        TestClient::join(server.local_addr, Auth::Invite { token: server.invite_token() }, "g")
+            .await;
+    let id = sppy_server::library::file_id("Movies", Path::new("Big.mkv"));
+    let url = format!("http://{}/media/{}?t={}", server.local_addr, id.0, w.session_token);
+    // Like mpv: an open-ended range request whose body is not being read.
+    let _stalled =
+        reqwest::Client::new().get(url).header("Range", "bytes=0-").send().await.unwrap();
+    let done = tokio::time::timeout(std::time::Duration::from_secs(6), server.shutdown()).await;
+    assert!(done.is_ok(), "shutdown hung");
+}
