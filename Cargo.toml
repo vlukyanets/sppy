@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "bins/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# internal
+sppy-proto = { path = "crates/proto" }
+sppy-sync = { path = "crates/sync" }
+sppy-common = { path = "crates/common" }
+sppy-server = { path = "crates/server" }
+sppy-player = { path = "crates/player" }
+sppy-client-core = { path = "crates/client-core" }
+
+# async
+tokio = { version = "1.54", features = ["full"] }
+futures-util = "0.3.34"
+
+# server
+axum = { version = "0.8.9", features = ["ws"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["fs", "trace"] }
+
+# client network
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream"] }
+
+# data
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2"
+
+# tokens, hashes
+rand = "0.10"
+base64 = "0.23"
+blake3 = "1.8"
+
+# gui
+eframe = "0.37"
+egui = "0.37"
+rfd = "0.18"
+
+# environment
+directories = "6"
+clap = { version = "4.6", features = ["derive"] }
+
+# logging, errors
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender = "0.2.5"
+thiserror = "2"
+anyhow = "1"
+
+# tests
+insta = { version = "1.49", features = ["json"] }
+tempfile = "3.27"

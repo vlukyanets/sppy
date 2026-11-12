@@ -1,0 +1,11 @@
+[package]
+name = "sppy-server-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sppy-server"
+path = "src/main.rs"
+
+[dependencies]
