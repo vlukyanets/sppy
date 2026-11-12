@@ -1,12 +1,14 @@
 //! Pure room state machine (spec §4.9). No I/O: time is passed in, effects are returned.
 
 mod participants;
+mod permissions;
 
 use std::collections::VecDeque;
 
 use sppy_proto::{
-    ChatMessage, CloseReason, ControlMode, Event, Item, NoticeAction, Participant, ParticipantId,
-    PlaybackState, RoomId, RoomSettings, RoomState, ServerMsg, Welcome,
+    ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, Item, NoticeAction,
+    Participant, ParticipantId, PlaybackState, ReqId, RoomId, RoomSettings, RoomState, ServerMsg,
+    Welcome,
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
@@ -106,6 +108,45 @@ impl Room {
     /// Periodic housekeeping (every 250 ms from the I/O layer).
     pub fn tick(&mut self, now_ms: u64) -> Vec<Effect> {
         self.expire_disconnected(now_ms)
+    }
+
+    /// Handle a room-level client request from `pid`.
+    pub fn command(&mut self, now_ms: u64, pid: ParticipantId, msg: ClientMsg) -> Vec<Effect> {
+        let _ = now_ms;
+        match msg {
+            ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
+            ClientMsg::SetCanControl {
+                req_id,
+                participant_id,
+                allowed,
+            } => self.set_can_control(pid, req_id, participant_id, allowed),
+            ClientMsg::Kick {
+                req_id,
+                participant_id,
+            } => self.kick(pid, req_id, participant_id),
+            other => match other.req_id() {
+                Some(req_id) => self.denied(pid, req_id, ErrorCode::InvalidRequest),
+                None => Vec::new(),
+            },
+        }
+    }
+
+    /// `Denied` followed by a resync of playback and room, to `pid` only.
+    fn denied(&self, pid: ParticipantId, req_id: ReqId, code: ErrorCode) -> Vec<Effect> {
+        vec![
+            Effect::Send {
+                to: pid,
+                msg: ServerMsg::Denied { req_id, code },
+            },
+            Effect::Send {
+                to: pid,
+                msg: ServerMsg::Playback(self.playback.clone()),
+            },
+            Effect::Send {
+                to: pid,
+                msg: ServerMsg::Room(self.state()),
+            },
+        ]
     }
 
     fn member(&self, pid: ParticipantId) -> Option<&Member> {

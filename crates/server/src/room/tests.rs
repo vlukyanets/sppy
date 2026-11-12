@@ -1,5 +1,4 @@
 use super::*;
-use sppy_proto::*;
 
 pub(super) fn config() -> RoomConfig {
     RoomConfig {
@@ -258,5 +257,170 @@ mod participants {
         assert!(w.is_host);
         assert!(r.is_host(joined.participant_id));
         assert!(participant(&r, joined.participant_id).unwrap().is_host);
+    }
+}
+
+pub(super) fn host(room: &mut Room) -> ParticipantId {
+    join_as(room, 0, "host", JoinRole::Host)
+}
+
+/// Asserts the exact "denied + resync" triple sent only to `to`.
+pub(super) fn assert_denied(effects: &[Effect], to: ParticipantId, req_id: ReqId, code: ErrorCode) {
+    assert_eq!(effects.len(), 3, "{effects:?}");
+    assert_eq!(
+        effects[0],
+        Effect::Send {
+            to,
+            msg: ServerMsg::Denied { req_id, code }
+        }
+    );
+    assert!(matches!(&effects[1], Effect::Send { to: t, msg: ServerMsg::Playback(_) } if *t == to));
+    assert!(matches!(&effects[2], Effect::Send { to: t, msg: ServerMsg::Room(_) } if *t == to));
+}
+
+pub(super) fn has_notice(effects: &[Effect], pred: impl Fn(&NoticeAction) -> bool) -> bool {
+    effects.iter().any(|e| matches!(
+        e,
+        Effect::Broadcast { msg: ServerMsg::Event(Event::Notice { action, .. }) } if pred(action)
+    ))
+}
+
+mod permissions {
+    use super::*;
+
+    fn set_mode(r: &mut Room, h: ParticipantId, mode: ControlMode) -> Vec<Effect> {
+        r.command(0, h, ClientMsg::SetControlMode { req_id: 1, mode })
+    }
+
+    #[test]
+    fn host_always_controls() {
+        let mut r = room();
+        let h = host(&mut r);
+        set_mode(&mut r, h, ControlMode::HostOnly);
+        assert!(r.can_control(h));
+    }
+
+    #[test]
+    fn everyone_mode() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        set_mode(&mut r, h, ControlMode::Everyone);
+        assert!(r.can_control(g));
+        set_mode(&mut r, h, ControlMode::HostOnly);
+        assert!(!r.can_control(g));
+    }
+
+    #[test]
+    fn selected_mode_requires_grant() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        set_mode(&mut r, h, ControlMode::Selected);
+        assert!(!r.can_control(g));
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::SetCanControl {
+                req_id: 2,
+                participant_id: g,
+                allowed: true,
+            },
+        );
+        assert!(r.can_control(g));
+        assert!(participant(&r, g).unwrap().can_control);
+        assert!(has_notice(&effects, |a| matches!(
+            a,
+            NoticeAction::CanControlChanged { allowed: true, .. }
+        )));
+    }
+
+    #[test]
+    fn set_control_mode_by_guest_denied() {
+        let mut r = room();
+        host(&mut r);
+        let g = join(&mut r, "guest");
+        let effects = set_mode(&mut r, g, ControlMode::Everyone);
+        assert_denied(&effects, g, 1, ErrorCode::NotHost);
+    }
+
+    #[test]
+    fn set_can_control_unknown_participant() {
+        let mut r = room();
+        let h = host(&mut r);
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::SetCanControl {
+                req_id: 4,
+                participant_id: ParticipantId(99),
+                allowed: true,
+            },
+        );
+        assert_denied(&effects, h, 4, ErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn kick() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let effects = r.command(
+            0,
+            h,
+            ClientMsg::Kick {
+                req_id: 3,
+                participant_id: g,
+            },
+        );
+        assert!(effects.contains(&Effect::Close {
+            to: g,
+            reason: CloseReason::Kicked
+        }));
+        assert!(participant(&r, g).is_none());
+        assert!(!r.session_valid("sess-guest"));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::Kicked { participant_id: g }));
+    }
+
+    #[test]
+    fn kick_by_guest_denied() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let effects = r.command(
+            0,
+            g,
+            ClientMsg::Kick {
+                req_id: 5,
+                participant_id: h,
+            },
+        );
+        assert_denied(&effects, g, 5, ErrorCode::NotHost);
+    }
+
+    #[test]
+    fn control_mode_change_broadcasts_room_and_notice() {
+        let mut r = room();
+        let h = host(&mut r);
+        let effects = set_mode(&mut r, h, ControlMode::HostOnly);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::Broadcast { msg: ServerMsg::Room(s) } if s.control_mode == ControlMode::HostOnly
+        )));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::ControlModeChanged {
+                mode: ControlMode::HostOnly
+            }));
+        assert!(effects.contains(&Effect::Persist));
+    }
+
+    #[test]
+    fn io_layer_messages_are_invalid_here() {
+        let mut r = room();
+        let h = host(&mut r);
+        let effects = r.command(0, h, ClientMsg::RotateInvite { req_id: 6 });
+        assert_denied(&effects, h, 6, ErrorCode::InvalidRequest);
+        assert!(r.command(0, h, ClientMsg::GetLibrary).is_empty());
     }
 }
