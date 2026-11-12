@@ -7,5 +7,6 @@ pub mod connection;
 pub mod download;
 pub mod link;
 pub mod media;
+pub mod netaddr;
 pub mod notice;
 mod session;

@@ -1,6 +1,7 @@
 //! sppy desktop app: a small egui window around `sppy-client-core`.
 
 mod app;
+mod host;
 mod logging;
 mod ui;
 

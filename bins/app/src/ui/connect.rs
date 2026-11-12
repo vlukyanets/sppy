@@ -58,10 +58,26 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 });
             }
         }
+        if !connected && app.host.is_none() {
+            let can = !app.ui.nickname.trim().is_empty() && !app.host_starting();
+            if ui.add_enabled(can, egui::Button::new("Become host")).clicked() {
+                app.become_host();
+            }
+        }
         if !snap.player_open && connected && ui.button("Open player").clicked() {
             app.send(UiCommand::OpenPlayer);
         }
     });
     ui.label(state_text(&snap.connection));
+    if let Some(host) = &app.host {
+        ui.horizontal(|ui| {
+            ui.label(format!("Hosting on port {}", host.local_addr.port()));
+            if let Some(link) = snap.invite_token.as_deref().and_then(|t| app.invite_link(t))
+                && ui.button("Copy invite link").on_hover_text(&link).clicked()
+            {
+                ui.ctx().copy_text(link);
+            }
+        });
+    }
     ui.add_space(4.0);
 }

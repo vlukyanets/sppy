@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use sppy_client_core::api::{ClientHandle, Snapshot, UiCommand, UiEvent};
 use sppy_client_core::config::{ClientConfig, ClientPaths, SavedServer};
+use sppy_server::ServerHandle;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 
@@ -27,14 +28,16 @@ pub struct UiState {
 }
 
 pub struct SppyApp {
-    /// Runs the client core (and the embedded server); must outlive the window.
-    #[allow(dead_code)]
+    /// Runs the client core and the embedded server; must outlive the window.
     pub rt: Runtime,
     pub handle: ClientHandle,
     pub config: ClientConfig,
     pub paths: ClientPaths,
     pub ui: UiState,
     events: broadcast::Receiver<UiEvent>,
+    /// The embedded server while hosting.
+    pub host: Option<ServerHandle>,
+    host_starting: Option<std::sync::mpsc::Receiver<Result<ServerHandle, String>>>,
 }
 
 impl SppyApp {
@@ -65,7 +68,7 @@ impl SppyApp {
             last_error: None,
         };
         let events = handle.subscribe_events();
-        SppyApp { rt, handle, config, paths, ui, events }
+        SppyApp { rt, handle, config, paths, ui, events, host: None, host_starting: None }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -100,6 +103,56 @@ impl SppyApp {
         }
     }
 
+    /// Start the embedded server; the client joins it once it is up.
+    pub fn become_host(&mut self) {
+        if self.host.is_some() || self.host_starting.is_some() {
+            return;
+        }
+        self.config.nickname = self.ui.nickname.trim().to_owned();
+        self.save_config();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (cfg, dir) = (self.config.host.clone(), self.paths.host_data_dir.clone());
+        self.rt.spawn(async move {
+            let _ = tx.send(crate::host::become_host(cfg, dir).await.map_err(|e| e.to_string()));
+        });
+        self.host_starting = Some(rx);
+    }
+
+    pub fn host_starting(&self) -> bool {
+        self.host_starting.is_some()
+    }
+
+    fn poll_host(&mut self) {
+        let Some(rx) = &self.host_starting else { return };
+        match rx.try_recv() {
+            Ok(Ok(handle)) => {
+                self.host_starting = None;
+                self.send(UiCommand::BecomeHostConnect {
+                    port: handle.local_addr.port(),
+                    host_token: handle.host_token.clone(),
+                });
+                self.host = Some(handle);
+            }
+            Ok(Err(e)) => {
+                self.host_starting = None;
+                self.push_log(LogKind::Error, format!("Cannot start the server: {e}"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.host_starting = None,
+        }
+    }
+
+    /// Invite link for the embedded server.
+    pub fn invite_link(&self, token: &str) -> Option<String> {
+        let port = self.host.as_ref()?.local_addr.port();
+        Some(sppy_client_core::netaddr::invite_link(
+            self.config.host.public_address.as_deref(),
+            port,
+            token,
+            sppy_client_core::netaddr::first_non_loopback_ip(),
+        ))
+    }
+
     fn drain_events(&mut self) {
         loop {
             match self.events.try_recv() {
@@ -116,8 +169,19 @@ impl SppyApp {
 }
 
 impl eframe::App for SppyApp {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+        self.poll_host();
+        if self.host_starting.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    fn on_exit(&mut self) {
+        let _ = self.handle.commands.send(UiCommand::Disconnect);
+        if let Some(host) = self.host.take() {
+            self.rt.block_on(host.shutdown());
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
