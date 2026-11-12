@@ -5,3 +5,21 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+sppy-proto.workspace = true
+sppy-sync.workspace = true
+sppy-common.workspace = true
+sppy-player.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+toml.workspace = true
+directories.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sppy-server.workspace = true
+sppy-player = { workspace = true, features = ["fake"] }
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true

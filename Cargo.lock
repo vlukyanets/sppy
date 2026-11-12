@@ -1103,6 +1103,22 @@ version = "0.1.0"
 [[package]]
 name = "sppy-client-core"
 version = "0.1.0"
+dependencies = [
+ "directories",
+ "futures-util",
+ "serde",
+ "sppy-common",
+ "sppy-player",
+ "sppy-proto",
+ "sppy-server",
+ "sppy-sync",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "toml",
+ "tracing",
+]
 
 [[package]]
 name = "sppy-common"
