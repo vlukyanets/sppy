@@ -184,3 +184,46 @@ fn play_from_pause_no_seek_when_close() {
     let c = k.update(0, &target(50), &Observed { position_ms: 0, paused: true, speed: 1.0 });
     assert_eq!(c, vec![Correction::Play]);
 }
+
+#[test]
+fn large_residual_after_seek_reseeks_with_lead() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0)); // seek to 10 000
+    // The slow seek landed 500 ms behind: seek again, compensating.
+    let c = k.update(1000, &target(11_000), &obs(10_500, 1.0));
+    assert_eq!(k.seek_lead_ms(), 500);
+    assert!(c.contains(&Correction::Seek { position_ms: 11_500 }), "{c:?}");
+}
+
+#[test]
+fn small_residual_after_seek_uses_speed() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0));
+    let c = k.update(1000, &target(11_000), &obs(10_800, 1.0));
+    assert!(c.iter().all(|c| !matches!(c, Correction::Seek { .. })), "{c:?}");
+    assert!(speed_of(&c).is_some());
+}
+
+#[test]
+fn reseeks_are_bounded() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0));
+    let mut t = 1000;
+    let mut seeks = 0;
+    for _ in 0..6 {
+        // A player that always lands 600 ms behind whatever we ask (pathological).
+        let c = k.update(t, &target(10_000 + t), &obs(10_000 + t - 600, 1.0));
+        seeks += c.iter().filter(|c| matches!(c, Correction::Seek { .. })).count();
+        t += 1000;
+    }
+    assert!(seeks <= 2, "{seeks}");
+}
+
+#[test]
+fn seek_lead_shrinks_when_overshooting() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0));
+    k.update(1000, &target(11_000), &obs(10_500, 1.0)); // lead 500, reseek
+    k.update(2000, &target(12_000), &obs(12_200, 1.0)); // overshot by 200
+    assert_eq!(k.seek_lead_ms(), 300);
+}

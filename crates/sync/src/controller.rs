@@ -27,6 +27,8 @@ pub enum Correction {
 }
 
 const SPEED_EPS: f64 = 0.001;
+/// Consecutive compensating re-seeks allowed after one seek.
+const MAX_RESEEKS: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct DriftController {
@@ -35,6 +37,7 @@ pub struct DriftController {
     correcting: bool,
     seek_issued: bool,
     seek_lead_ms: u64,
+    reseeks: u32,
     commanded_speed: Option<f64>,
     last_pause_cmd: Option<(bool, u64)>,
 }
@@ -47,6 +50,7 @@ impl DriftController {
             correcting: false,
             seek_issued: false,
             seek_lead_ms: 0,
+            reseeks: 0,
             commanded_speed: None,
             last_pause_cmd: None,
         }
@@ -83,6 +87,7 @@ impl DriftController {
                         position_ms: target.position_ms + self.seek_lead_ms,
                     });
                     self.seek_issued = true;
+                    self.reseeks = 0;
                 }
                 self.settle_until = now_ms + self.p.settle_ms;
                 self.correcting = false;
@@ -111,6 +116,7 @@ impl DriftController {
         if abs > self.p.seek_threshold_ms {
             out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
             self.seek_issued = true;
+            self.reseeks = 0;
             self.correcting = false;
             self.settle_until = now_ms + self.p.settle_ms;
             if (current_speed - target.room_speed).abs() > SPEED_EPS {
@@ -121,9 +127,22 @@ impl DriftController {
 
         if self.seek_issued {
             self.seek_issued = false;
-            if drift < -(self.p.dead_band_ms as i64) {
-                self.seek_lead_ms = (self.seek_lead_ms + abs).min(self.p.max_seek_lead_ms);
+            if abs > self.p.dead_band_ms {
+                if drift < 0 {
+                    self.seek_lead_ms = (self.seek_lead_ms + abs).min(self.p.max_seek_lead_ms);
+                } else {
+                    self.seek_lead_ms = self.seek_lead_ms.saturating_sub(abs);
+                }
             }
+            if abs > self.p.reseek_threshold_ms && self.reseeks < MAX_RESEEKS {
+                self.reseeks += 1;
+                out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
+                self.seek_issued = true;
+                self.correcting = false;
+                self.settle_until = now_ms + self.p.settle_ms;
+                return out;
+            }
+            self.reseeks = 0;
         }
 
         let threshold = if self.correcting { self.p.speed_exit_ms } else { self.p.dead_band_ms };

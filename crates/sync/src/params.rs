@@ -17,6 +17,8 @@ pub struct SyncParams {
     /// No corrections for this long after a seek, load or unpause.
     pub settle_ms: u64,
     pub max_seek_lead_ms: u64,
+    /// After our own seek, a residual above this triggers another (compensated) seek.
+    pub reseek_threshold_ms: u64,
 }
 
 impl Default for SyncParams {
@@ -29,6 +31,7 @@ impl Default for SyncParams {
             seek_threshold_ms: 1500,
             settle_ms: 1000,
             max_seek_lead_ms: 2000,
+            reseek_threshold_ms: 300,
         }
     }
 }
