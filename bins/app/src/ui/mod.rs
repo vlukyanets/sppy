@@ -1,7 +1,9 @@
 //! UI panels.
 
 pub mod connect;
+pub mod library;
 pub mod participants;
+pub mod playlist;
 
 use sppy_client_core::api::Snapshot;
 

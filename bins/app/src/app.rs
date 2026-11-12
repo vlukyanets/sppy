@@ -25,6 +25,8 @@ pub struct UiState {
     pub nickname: String,
     pub log: VecDeque<(LogKind, String)>,
     pub last_error: Option<String>,
+    pub url: String,
+    pub library_requested: bool,
 }
 
 pub struct SppyApp {
@@ -66,6 +68,8 @@ impl SppyApp {
             nickname: config.nickname.clone(),
             log: VecDeque::new(),
             last_error: None,
+            url: String::new(),
+            library_requested: false,
         };
         let events = handle.subscribe_events();
         SppyApp { rt, handle, config, paths, ui, events, host: None, host_starting: None }
@@ -190,7 +194,18 @@ impl eframe::App for SppyApp {
         egui::Panel::bottom("status").show(ui, |ui| ui::status_line(self, ui, &snap));
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui::participants::show(self, ui, &snap);
+                if snap.room.is_none() {
+                    self.ui.library_requested = false;
+                    return;
+                }
+                egui::CollapsingHeader::new("Participants")
+                    .default_open(true)
+                    .show(ui, |ui| ui::participants::show(self, ui, &snap));
+                egui::CollapsingHeader::new("Playlist")
+                    .default_open(true)
+                    .show(ui, |ui| ui::playlist::show(self, ui, &snap));
+                egui::CollapsingHeader::new("Library")
+                    .show(ui, |ui| ui::library::show(self, ui, &snap));
             });
         });
     }

@@ -91,6 +91,20 @@ pub struct Snapshot {
     pub server_offset_ms: Option<i64>,
 }
 
+impl Snapshot {
+    /// Whether I may control playback and edit the playlist (spec §4.4).
+    pub fn can_control(&self) -> bool {
+        let (Some(me), Some(room)) = (self.me, &self.room) else { return false };
+        let Some(p) = room.participants.iter().find(|p| p.id == me) else { return false };
+        p.is_host
+            || match room.control_mode {
+                ControlMode::Everyone => true,
+                ControlMode::HostOnly => false,
+                ControlMode::Selected => p.can_control,
+            }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
     Chat(ChatMessage),
@@ -132,4 +146,42 @@ pub fn spawn_client<L: PlayerLauncher>(config: ClientConfig, launcher: L) -> Cli
         crate::session::Session::new(config, launcher, epoch, state_tx, events_tx.clone());
     tokio::spawn(session.run(cmd_rx));
     ClientHandle { commands, state, events, events_tx, epoch }
+}
+
+#[cfg(test)]
+mod tests {
+    use sppy_proto::*;
+
+    use super::*;
+
+    fn snap(mode: ControlMode, is_host: bool, can_control: bool) -> Snapshot {
+        Snapshot {
+            me: Some(ParticipantId(2)),
+            room: Some(RoomState {
+                room_id: RoomId::main(),
+                participants: vec![Participant {
+                    id: ParticipantId(2),
+                    nickname: "me".into(),
+                    is_host,
+                    can_control,
+                    connected: true,
+                    status: MediaStatus::Loading,
+                }],
+                control_mode: mode,
+                playlist: vec![],
+                settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
+            }),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn can_control_follows_spec_rules() {
+        assert!(snap(ControlMode::Everyone, false, false).can_control());
+        assert!(!snap(ControlMode::HostOnly, false, true).can_control());
+        assert!(snap(ControlMode::HostOnly, true, false).can_control());
+        assert!(!snap(ControlMode::Selected, false, false).can_control());
+        assert!(snap(ControlMode::Selected, false, true).can_control());
+        assert!(!Snapshot::default().can_control());
+    }
 }

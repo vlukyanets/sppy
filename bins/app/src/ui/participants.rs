@@ -17,7 +17,6 @@ pub fn status_text(s: &MediaStatus) -> String {
 
 pub fn show(_app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let Some(room) = &snap.room else { return };
-    ui.heading("Participants");
     for p in &room.participants {
         ui.horizontal(|ui| {
             let dot = if p.connected { "●" } else { "○" };
