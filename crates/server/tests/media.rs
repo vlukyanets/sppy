@@ -212,3 +212,38 @@ async fn shutdown_does_not_hang_on_an_open_stream() {
     let done = tokio::time::timeout(std::time::Duration::from_secs(6), server.shutdown()).await;
     assert!(done.is_ok(), "shutdown hung");
 }
+
+#[tokio::test]
+async fn vobsub_companion_is_served() {
+    let dir = tempfile::tempdir().unwrap();
+    let media = tempfile::tempdir().unwrap();
+    std::fs::write(media.path().join("Movie.mkv"), b"video").unwrap();
+    std::fs::write(media.path().join("Movie.idx"), b"index file").unwrap();
+    std::fs::write(media.path().join("Movie.sub"), b"subpicture data").unwrap();
+    let cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        ..test_config()
+    };
+    let server = start_server(dir.path(), cfg).await;
+    let (mut c, w) =
+        TestClient::join(server.local_addr, Auth::Invite { token: server.invite_token() }, "g")
+            .await;
+    c.send(ClientMsg::GetLibrary).await;
+    let ServerMsg::Library { roots } =
+        c.recv_until(|m| matches!(m, ServerMsg::Library { .. })).await
+    else {
+        unreachable!()
+    };
+    let LibraryNode::Dir { children, .. } = &roots[0] else { panic!() };
+    let LibraryNode::File { subtitles, .. } = &children[0] else { panic!() };
+    assert_eq!(subtitles.len(), 1);
+    let base =
+        format!("http://{}/media/{}/sub/{}", server.local_addr, movie_id().0, subtitles[0].index);
+    let idx = reqwest::get(format!("{base}?t={}", w.session_token)).await.unwrap();
+    assert_eq!(idx.bytes().await.unwrap().as_ref(), b"index file");
+    let data = reqwest::get(format!("{base}/companion?t={}", w.session_token)).await.unwrap();
+    assert_eq!(data.status(), 200);
+    assert_eq!(data.bytes().await.unwrap().as_ref(), b"subpicture data");
+    assert_eq!(reqwest::get(format!("{base}/companion")).await.unwrap().status(), 401);
+    server.shutdown().await;
+}

@@ -60,7 +60,7 @@ State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
 
 ## Subtitles
 
-External subtitles (srt, ass, ssa, vtt, sub, idx) are found next to a video or in a
+External subtitles (srt, ass, ssa, vtt, VobSub idx+sub, …) are found next to a video or in a
 `Subs/`, `Subtitles/` or `Sub/` folder beside it, including `Subs/<video name>/*.srt`.
 Names are compared ignoring case and punctuation: `Movie (2019) [EN].srt` belongs to
 `Movie.2019.mkv` with the label `en`. The player shows the subtitle matching the first of

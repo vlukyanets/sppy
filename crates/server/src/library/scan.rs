@@ -25,6 +25,8 @@ pub struct LibraryFile {
     /// File name without extension.
     pub title: String,
     pub subtitles: Vec<(Subtitle, PathBuf)>,
+    /// VobSub: subtitle index of an `.idx` → its `.sub` data file.
+    pub subtitle_companions: HashMap<u32, PathBuf>,
     pub fingerprint: Option<Fingerprint>,
 }
 
@@ -280,6 +282,23 @@ fn walk(
         }
     }
     subs.sort_by(|a, b| a.path.cmp(&b.path));
+    // VobSub: `X.sub` next to `X.idx` is the idx's data file, not a subtitle of its own.
+    let ext_is = |p: &Path, e: &str| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(e));
+    let idx_paths: Vec<PathBuf> =
+        subs.iter().filter(|c| ext_is(&c.path, "idx")).map(|c| c.path.clone()).collect();
+    let companion_of = |idx: &Path| {
+        subs.iter()
+            .find(|c| {
+                ext_is(&c.path, "sub")
+                    && c.path.parent() == idx.parent()
+                    && c.path.file_stem() == idx.file_stem()
+            })
+            .map(|c| c.path.clone())
+    };
+    let companions: HashMap<PathBuf, PathBuf> =
+        idx_paths.iter().filter_map(|i| companion_of(i).map(|c| (i.clone(), c))).collect();
+    let paired: std::collections::HashSet<PathBuf> = companions.values().cloned().collect();
+    subs.retain(|c| !paired.contains(&c.path));
     let video_stems: Vec<String> =
         videos.iter().map(|(name, _, _)| normalize_name(&stem_of(name))).collect();
     // A subtitle belongs to the video whose normalized name it equals or starts with
@@ -306,6 +325,7 @@ fn walk(
         }
     }
     for ((name, path, meta), matched) in videos.into_iter().zip(per_video) {
+        let mut subtitle_companions = HashMap::new();
         let subtitles: Vec<(Subtitle, PathBuf)> = matched
             .into_iter()
             .map(|(label, sub_path)| {
@@ -313,7 +333,11 @@ fn walk(
                     .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
-                (Subtitle { index: subtitle_index(&root.path, &sub_path), label, ext }, sub_path)
+                let index = subtitle_index(&root.path, &sub_path);
+                if let Some(companion) = companions.get(&sub_path) {
+                    subtitle_companions.insert(index, companion.clone());
+                }
+                (Subtitle { index, label, ext }, sub_path)
             })
             .collect();
         let rel_path = rel.join(&name);
@@ -325,6 +349,7 @@ fn walk(
             mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             title: stem_of(&name),
             subtitles,
+            subtitle_companions,
             fingerprint: None,
             rel_path,
         });
@@ -579,5 +604,38 @@ mod subtitle_layout_tests {
         let f = lib.files().next().unwrap();
         let ru = f.subtitles.iter().find(|(s, _)| s.label.as_deref() == Some("ru")).unwrap();
         assert_eq!(ru.0.index, before);
+    }
+}
+
+#[cfg(test)]
+mod vobsub_tests {
+    use super::*;
+
+    #[test]
+    fn idx_and_sub_pair_is_one_subtitle() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["Movie.mkv", "Movie.idx", "Movie.sub", "Movie.en.srt", "Other.sub"] {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        let lib = Library::scan(&[MediaRoot { name: "M".into(), path: dir.path().to_path_buf() }]);
+        let f = lib.files().next().unwrap();
+        let mut exts: Vec<_> = f.subtitles.iter().map(|(s, _)| s.ext.clone()).collect();
+        exts.sort();
+        assert_eq!(exts, vec!["idx".to_string(), "srt".to_string()]);
+        let idx = f.subtitles.iter().find(|(s, _)| s.ext == "idx").unwrap().0.index;
+        assert_eq!(f.subtitle_companions.get(&idx), Some(&dir.path().join("Movie.sub")));
+    }
+
+    #[test]
+    fn lone_sub_file_is_still_a_subtitle() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["Movie.mkv", "Movie.sub"] {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        let lib = Library::scan(&[MediaRoot { name: "M".into(), path: dir.path().to_path_buf() }]);
+        let f = lib.files().next().unwrap();
+        assert_eq!(f.subtitles.len(), 1);
+        assert_eq!(f.subtitles[0].0.ext, "sub");
+        assert!(f.subtitle_companions.is_empty());
     }
 }

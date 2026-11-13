@@ -28,5 +28,6 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(ws::upgrade))
         .route("/media/{file_id}", get(media::file))
         .route("/media/{file_id}/sub/{index}", get(media::subtitle))
+        .route("/media/{file_id}/sub/{index}/companion", get(media::subtitle_companion))
         .with_state(state)
 }

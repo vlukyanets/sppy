@@ -20,13 +20,21 @@ impl SharedMedia {
         self.sessions.read().expect("sessions lock").contains(token)
     }
 
-    /// Path of a library file, or of one of its subtitles.
-    pub fn resolve(&self, file_id: &str, subtitle: Option<u32>) -> Option<PathBuf> {
+    /// Path of a library file, one of its subtitles, or a VobSub subtitle's `.sub` companion.
+    pub fn resolve(
+        &self,
+        file_id: &str,
+        subtitle: Option<u32>,
+        companion: bool,
+    ) -> Option<PathBuf> {
         let lib = self.library.read().expect("library lock");
         let f = lib.get(&sppy_proto::FileId(file_id.to_owned()))?;
-        match subtitle {
-            None => Some(f.abs_path.clone()),
-            Some(i) => f.subtitles.iter().find(|(s, _)| s.index == i).map(|(_, p)| p.clone()),
+        match (subtitle, companion) {
+            (None, _) => Some(f.abs_path.clone()),
+            (Some(i), false) => {
+                f.subtitles.iter().find(|(s, _)| s.index == i).map(|(_, p)| p.clone())
+            }
+            (Some(i), true) => f.subtitle_companions.get(&i).cloned(),
         }
     }
 }

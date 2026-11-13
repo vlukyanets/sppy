@@ -20,12 +20,13 @@ async fn serve(
     token: Option<String>,
     file_id: &str,
     sub: Option<u32>,
+    companion: bool,
     req: Request,
 ) -> Response {
     if !token.is_some_and(|t| state.media.session_valid(&t)) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let Some(path) = state.media.resolve(file_id, sub) else {
+    let Some(path) = state.media.resolve(file_id, sub, companion) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     match ServeFile::new(path).oneshot(req).await {
@@ -40,7 +41,7 @@ pub async fn file(
     Query(q): Query<TokenQuery>,
     req: Request,
 ) -> Response {
-    serve(&state, q.t, &file_id, None, req).await
+    serve(&state, q.t, &file_id, None, false, req).await
 }
 
 pub async fn subtitle(
@@ -49,5 +50,15 @@ pub async fn subtitle(
     Query(q): Query<TokenQuery>,
     req: Request,
 ) -> Response {
-    serve(&state, q.t, &file_id, Some(index), req).await
+    serve(&state, q.t, &file_id, Some(index), false, req).await
+}
+
+/// The `.sub` data file of a VobSub (`.idx`) subtitle.
+pub async fn subtitle_companion(
+    State(state): State<AppState>,
+    Path((file_id, index)): Path<(String, u32)>,
+    Query(q): Query<TokenQuery>,
+    req: Request,
+) -> Response {
+    serve(&state, q.t, &file_id, Some(index), true, req).await
 }

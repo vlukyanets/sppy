@@ -21,7 +21,7 @@ use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection
 use crate::download::{DownloadEvent, DownloadJob, Downloader, Priority};
 use crate::link::{ServerAddress, parse_address};
 use crate::local_index::LocalIndex;
-use crate::media::{Resolved, file_url, stream_source, subtitle_url};
+use crate::media::{Resolved, companion_url, file_url, is_vobsub, stream_source, subtitle_url};
 use crate::notice::{nickname, render_notice};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -105,6 +105,7 @@ pub(crate) struct Session<L: PlayerLauncher> {
     /// Items whose download failed: streamed instead.
     stream_fallback: std::collections::HashSet<ItemId>,
     cache: MediaCache,
+    http: reqwest::Client,
     local_index: std::sync::Arc<std::sync::Mutex<LocalIndex>>,
     /// Signals that a (re)scan of my media folders finished.
     index_rx: mpsc::UnboundedReceiver<()>,
@@ -147,6 +148,7 @@ impl<L: PlayerLauncher> Session<L> {
         let (index_tx, index_rx) = mpsc::unbounded_channel();
         spawn_local_index(local_index.clone(), config.local_media.clone(), index_tx);
         let client = reqwest::Client::new();
+        let http = client.clone();
         let (downloader, dl_rx) = if config.download_backoff_ms.is_empty() {
             Downloader::spawn(client)
         } else {
@@ -177,6 +179,7 @@ impl<L: PlayerLauncher> Session<L> {
             dl_rx,
             stream_fallback: Default::default(),
             cache,
+            http,
             local_index,
             index_rx,
             overrides: Default::default(),
@@ -505,6 +508,11 @@ impl<L: PlayerLauncher> Session<L> {
             return;
         };
         let Some(item) = self.item(id) else { return };
+        for (url, path) in self.missing_vobsubs(&item) {
+            if let Err(e) = fetch_to_file(&self.http.clone(), &url, &path).await {
+                tracing::warn!("cannot fetch VobSub subtitle: {e}");
+            }
+        }
         let Some(resolved) = self.resolve(&item) else { return };
         self.start_item(id, resolved).await;
     }
@@ -614,7 +622,16 @@ impl<L: PlayerLauncher> Session<L> {
             .subtitles
             .iter()
             .zip(subs)
-            .map(|(s, path)| (subtitle_url(base, &file_id.0, s.index, token), path))
+            .flat_map(|(s, path)| {
+                let mut v = vec![(subtitle_url(base, &file_id.0, s.index, token), path.clone())];
+                if is_vobsub(s) {
+                    v.push((
+                        companion_url(base, &file_id.0, s.index, token),
+                        path.with_extension("sub"),
+                    ));
+                }
+                v
+            })
             .collect();
         Some(DownloadJob {
             file_id: file_id.clone(),
@@ -658,11 +675,10 @@ impl<L: PlayerLauncher> Session<L> {
         };
         let item = &ordered;
         if let Some(path) = self.local_copy(item) {
-            let subtitles = match stream_source(base, item, token) {
-                Resolved::Stream { subtitles, .. } => subtitles,
-                _ => Vec::new(),
-            };
-            return Some(Resolved::Local { path, subtitles });
+            return Some(Resolved::Local {
+                path,
+                subtitles: self.subtitle_sources(item, base, token),
+            });
         }
         if let Source::File { file_id } = &item.source {
             // Spec §7.1: local copy, then a completed cache entry, then the delivery mode.
@@ -680,7 +696,51 @@ impl<L: PlayerLauncher> Session<L> {
                 return Some(Resolved::Wait);
             }
         }
-        Some(stream_source(base, item, token))
+        Some(match stream_source(base, item, token) {
+            Resolved::Stream { media, .. } if matches!(item.source, Source::File { .. }) => {
+                Resolved::Stream { media, subtitles: self.subtitle_sources(item, base, token) }
+            }
+            other => other,
+        })
+    }
+
+    /// Subtitles of a library item for the player: URLs, except VobSub pairs, which must be
+    /// local files (see [`Self::missing_vobsubs`]); a VobSub not fetched yet is left out.
+    fn subtitle_sources(&self, item: &Item, base: &str, token: &str) -> Vec<MediaSource> {
+        let Source::File { file_id } = &item.source else { return Vec::new() };
+        let (_, local) = self.cache_paths(file_id, item);
+        item.subtitles
+            .iter()
+            .zip(local)
+            .filter_map(|(s, path)| {
+                if is_vobsub(s) {
+                    (path.is_file() && path.with_extension("sub").is_file())
+                        .then_some(MediaSource::Path(path))
+                } else {
+                    Some(MediaSource::Url(subtitle_url(base, &file_id.0, s.index, token)))
+                }
+            })
+            .collect()
+    }
+
+    /// VobSub `.idx` + `.sub` pairs of a library item still missing from the cache, as
+    /// `(url, path)` downloads that put both files side by side.
+    fn missing_vobsubs(&self, item: &Item) -> Vec<(String, std::path::PathBuf)> {
+        let (Source::File { file_id }, Some(base), Some(token)) =
+            (&item.source, self.http_base.as_ref(), self.session_token.as_ref())
+        else {
+            return Vec::new();
+        };
+        let (_, local) = self.cache_paths(file_id, item);
+        let mut out = Vec::new();
+        for (s, idx_path) in item.subtitles.iter().zip(local).filter(|(s, _)| is_vobsub(s)) {
+            let sub_path = idx_path.with_extension("sub");
+            if !(idx_path.is_file() && sub_path.is_file()) {
+                out.push((subtitle_url(base, &file_id.0, s.index, token), idx_path));
+                out.push((companion_url(base, &file_id.0, s.index, token), sub_path));
+            }
+        }
+        out
     }
 
     async fn start_item(&mut self, id: ItemId, resolved: Resolved) {
@@ -1092,4 +1152,20 @@ fn spawn_local_index(
             tokio::time::sleep(Duration::from_secs(600)).await;
         }
     });
+}
+
+async fn fetch_to_file(
+    client: &reqwest::Client,
+    url: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let body = resp.bytes().await.map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
+    }
+    tokio::fs::write(path, &body).await.map_err(|e| e.to_string())
 }

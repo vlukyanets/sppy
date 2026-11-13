@@ -77,6 +77,17 @@ pub fn subtitle_url(base: &str, file_id: &str, index: u32, token: &str) -> Strin
     format!("{base}/media/{file_id}/sub/{index}?t={}", encode_query(token))
 }
 
+/// The `.sub` data file of a VobSub (`.idx`) subtitle.
+pub fn companion_url(base: &str, file_id: &str, index: u32, token: &str) -> String {
+    format!("{base}/media/{file_id}/sub/{index}/companion?t={}", encode_query(token))
+}
+
+/// VobSub (`.idx` + `.sub`): ffmpeg finds the `.sub` by swapping the extension of the `.idx`
+/// file name, which cannot work for a URL with a query, so these are played from local files.
+pub fn is_vobsub(s: &Subtitle) -> bool {
+    s.ext.eq_ignore_ascii_case("idx")
+}
+
 /// Streaming source of an item (a scheme-less "URL" is a local path).
 pub fn stream_source(base: &str, item: &Item, session_token: &str) -> Resolved {
     match &item.source {

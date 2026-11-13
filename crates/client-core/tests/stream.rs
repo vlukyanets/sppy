@@ -92,3 +92,44 @@ async fn preferred_subtitle_language_is_added_first() {
     assert!(first.unwrap().contains(&format!("/sub/{ru}?")));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn vobsub_is_given_to_the_player_as_a_local_idx_with_its_sub() {
+    let dir = tempfile::tempdir().unwrap();
+    let media = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    std::fs::write(media.path().join("Movie.mkv"), vec![7u8; 1024]).unwrap();
+    std::fs::write(media.path().join("Movie.idx"), b"index").unwrap();
+    std::fs::write(media.path().join("Movie.sub"), b"subpictures").unwrap();
+    let cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        ..test_config()
+    };
+    let server = start_server(dir.path(), cfg).await;
+    let client_cfg = sppy_client_core::config::ClientConfig {
+        nickname: "host".into(),
+        cache_dir: Some(cache.path().to_path_buf()),
+        ..Default::default()
+    };
+    let h = host_with(&server, FakeConfig::default(), client_cfg).await;
+    let movie = sppy_server::library::file_id("Movies", std::path::Path::new("Movie.mkv"));
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie }]));
+    let idx_path = || {
+        h.launcher.remote().and_then(|r| {
+            r.commands().into_iter().find_map(|c| match c {
+                FakeCmd::SubAdd(MediaSource::Path(p)) => Some(p),
+                _ => None,
+            })
+        })
+    };
+    eventually("vobsub added as a local file", 5, || idx_path().is_some()).await;
+    let idx = idx_path().unwrap();
+    assert_eq!(idx.extension().unwrap(), "idx");
+    assert_eq!(std::fs::read(&idx).unwrap(), b"index");
+    assert_eq!(std::fs::read(idx.with_extension("sub")).unwrap(), b"subpictures");
+    assert!(
+        h.remote().commands().iter().any(|c| matches!(c, FakeCmd::Load(MediaSource::Url(_)))),
+        "the video itself is still streamed"
+    );
+    server.shutdown().await;
+}
