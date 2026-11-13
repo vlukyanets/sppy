@@ -154,3 +154,22 @@ async fn mpv_opens_non_utf8_path() {
     .await;
     assert!(matches!(ev, PlayerEvent::FileLoaded { duration_ms: Some(_), .. }), "{ev:?}");
 }
+
+#[tokio::test]
+async fn mpv_shows_the_first_external_subtitle() {
+    let Some(mut p) = launch().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let Some(clip) = make_clip(dir.path(), 3) else { return };
+    let srt = dir.path().join("a.srt");
+    std::fs::write(&srt, "1\n00:00:00,000 --> 00:00:03,000\nhello\n").unwrap();
+    let other = dir.path().join("b.srt");
+    std::fs::write(&other, "1\n00:00:00,000 --> 00:00:03,000\nother\n").unwrap();
+    p.load(MediaSource::Path(clip), vec![MediaSource::Path(srt.clone()), MediaSource::Path(other)])
+        .await
+        .unwrap();
+    wait_for(&mut p, 10, |e| matches!(e, PlayerEvent::FileLoaded { .. })).await;
+    let path = p.get_property("current-tracks/sub/external-filename").await.unwrap();
+    assert_eq!(path.as_str(), Some(srt.to_str().unwrap()));
+    let count = p.get_property("track-list/count").await.unwrap();
+    assert!(count.as_u64().unwrap() >= 3, "video + two subtitles: {count}");
+}

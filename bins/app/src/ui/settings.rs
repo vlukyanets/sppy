@@ -32,6 +32,24 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             ui.end_row();
         });
 
+        ui.horizontal(|ui| {
+            ui.label("Subtitle languages");
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut app.ui.subtitle_languages)
+                    .hint_text("e.g. ru, en (first one wins)"),
+            );
+            if r.changed() {
+                c.subtitle_languages = app
+                    .ui
+                    .subtitle_languages
+                    .split([',', ' '])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
+        });
+
         ui.heading("My media folders");
         ui.weak("Files here are used instead of downloading when they match the server's copy.");
         let mut remove = None;

@@ -639,6 +639,15 @@ impl<L: PlayerLauncher> Session<L> {
     /// Decide how the item reaches the player: cache, download (Wait) or stream.
     fn resolve(&self, item: &Item) -> Option<Resolved> {
         let (base, token) = (self.http_base.as_ref()?, self.session_token.as_ref()?);
+        // The player shows the first subtitle: put the preferred language first.
+        let ordered = Item {
+            subtitles: crate::media::order_subtitles(
+                &item.subtitles,
+                &self.config.subtitle_languages,
+            ),
+            ..item.clone()
+        };
+        let item = &ordered;
         if let Some(path) = self.local_copy(item) {
             let subtitles = match stream_source(base, item, token) {
                 Resolved::Stream { subtitles, .. } => subtitles,

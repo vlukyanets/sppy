@@ -173,6 +173,11 @@ impl MpvPlayer {
         Ok(MpvPlayer { ipc, events, pending_subs, kill: Some(kill_tx), links: Vec::new() })
     }
 
+    /// Read an mpv property (diagnostics and tests).
+    pub async fn get_property(&self, name: &str) -> PlayerResult<Value> {
+        self.ipc.command(vec![json!("get_property"), json!(name)]).await
+    }
+
     /// Ask mpv to quit (exit code 0).
     pub async fn quit(&self) {
         let _ = self.ipc.command(vec![json!("quit"), json!(0)]).await;
@@ -242,9 +247,12 @@ async fn pump(
                 let duration = ipc.command(vec![json!("get_property"), json!("duration")]).await;
                 let title = ipc.command(vec![json!("get_property"), json!("media-title")]).await;
                 let subs = std::mem::take(&mut *pending_subs.lock().expect("subs"));
-                for sub in subs {
+                // The first subtitle (the caller orders them by preference) is shown right away;
+                // the others are only added as tracks.
+                for (i, sub) in subs.into_iter().enumerate() {
+                    let flag = if i == 0 { "select" } else { "auto" };
                     if let Err(e) =
-                        ipc.command(vec![json!("sub-add"), json!(sub), json!("auto")]).await
+                        ipc.command(vec![json!("sub-add"), json!(sub), json!(flag)]).await
                     {
                         tracing::warn!("cannot add subtitle {sub}: {e}");
                     }

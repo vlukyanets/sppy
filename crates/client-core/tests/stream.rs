@@ -55,3 +55,40 @@ async fn file_item_streams_from_server() {
     .await;
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn preferred_subtitle_language_is_added_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let media = tempfile::tempdir().unwrap();
+    std::fs::write(media.path().join("Movie.mkv"), vec![7u8; 1024]).unwrap();
+    std::fs::write(media.path().join("Movie.en.srt"), b"en").unwrap();
+    std::fs::write(media.path().join("Movie.ru.srt"), b"ru").unwrap();
+    let cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        ..test_config()
+    };
+    let server = start_server(dir.path(), cfg).await;
+    let client_cfg = sppy_client_core::config::ClientConfig {
+        nickname: "host".into(),
+        subtitle_languages: vec!["ru".into()],
+        ..Default::default()
+    };
+    let h = host_with(&server, FakeConfig::default(), client_cfg).await;
+    let movie = sppy_server::library::file_id("Movies", std::path::Path::new("Movie.mkv"));
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie }]));
+    eventually("subtitles added", 5, || {
+        h.launcher.remote().is_some_and(|r| {
+            r.commands().iter().filter(|c| matches!(c, FakeCmd::SubAdd(_))).count() == 2
+        })
+    })
+    .await;
+    let room = snap(&h.handle).room.unwrap();
+    let ru =
+        room.playlist[0].subtitles.iter().find(|s| s.label.as_deref() == Some("ru")).unwrap().index;
+    let first = h.remote().commands().into_iter().find_map(|c| match c {
+        FakeCmd::SubAdd(MediaSource::Url(u)) => Some(u),
+        _ => None,
+    });
+    assert!(first.unwrap().contains(&format!("/sub/{ru}?")));
+    server.shutdown().await;
+}

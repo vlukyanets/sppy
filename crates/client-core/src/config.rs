@@ -40,6 +40,8 @@ pub struct ClientConfig {
     pub mode: DeliveryMode,
     pub prefetch_next: bool,
     pub local_media: Vec<PathBuf>,
+    /// Preferred subtitle languages, most wanted first (e.g. `["ru", "en"]`).
+    pub subtitle_languages: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_dir: Option<PathBuf>,
     pub cache_limit_gb: u64,
@@ -61,6 +63,7 @@ impl Default for ClientConfig {
             mode: DeliveryMode::Stream,
             prefetch_next: true,
             local_media: Vec::new(),
+            subtitle_languages: Vec::new(),
             cache_dir: None,
             cache_limit_gb: 30,
             servers: Vec::new(),

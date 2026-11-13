@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 pub use sppy_player::MediaSource;
-use sppy_proto::{Item, Source};
+use sppy_proto::{Item, Source, Subtitle};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Resolved {
@@ -40,6 +40,31 @@ fn encode_query(v: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+/// Order subtitles for the player, whose first one is shown: labels matching the preferred
+/// languages first (in preference order; a language matches any `.`-separated token of the
+/// label by prefix, so `ru` matches `ru.forced` and `3.russian`), then unlabeled ones, then the
+/// rest. Without preferences the order is kept.
+pub fn order_subtitles(subs: &[Subtitle], preferred: &[String]) -> Vec<Subtitle> {
+    let prefs: Vec<String> =
+        preferred.iter().map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
+    if prefs.is_empty() {
+        return subs.to_vec();
+    }
+    let rank = |s: &Subtitle| match &s.label {
+        None => prefs.len(),
+        Some(label) => {
+            let label = label.to_lowercase();
+            prefs
+                .iter()
+                .position(|p| label.split('.').any(|token| token.starts_with(p.as_str())))
+                .unwrap_or(prefs.len() + 1)
+        }
+    };
+    let mut out = subs.to_vec();
+    out.sort_by_key(rank);
+    out
 }
 
 /// Media URL of a library file on the server.
@@ -150,5 +175,41 @@ mod tests {
             panic!()
         };
         assert_eq!(u, "http://h:1/media/ab?t=a%2Bb%2Fc");
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use sppy_proto::Subtitle;
+
+    use super::*;
+
+    fn sub(index: u32, label: Option<&str>) -> Subtitle {
+        Subtitle { index, label: label.map(str::to_owned), ext: "srt".into() }
+    }
+
+    fn order(subs: &[Subtitle], prefs: &[&str]) -> Vec<u32> {
+        let prefs: Vec<String> = prefs.iter().map(|s| s.to_string()).collect();
+        order_subtitles(subs, &prefs).iter().map(|s| s.index).collect()
+    }
+
+    #[test]
+    fn preferred_language_first_then_unlabeled() {
+        let subs =
+            [sub(1, Some("en")), sub(2, None), sub(3, Some("ru.forced")), sub(4, Some("de"))];
+        assert_eq!(order(&subs, &["ru", "en"]), vec![3, 1, 2, 4]);
+        assert_eq!(order(&subs, &["EN"]), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn language_matches_any_token_prefix() {
+        let subs = [sub(1, Some("2.english")), sub(2, Some("3.russian"))];
+        assert_eq!(order(&subs, &["ru"]), vec![2, 1]);
+    }
+
+    #[test]
+    fn no_preferences_keep_order() {
+        let subs = [sub(5, Some("en")), sub(6, None)];
+        assert_eq!(order(&subs, &[]), vec![5, 6]);
     }
 }

@@ -31,6 +31,7 @@ pub struct UiState {
     pub chat_seeded_for: Option<sppy_proto::ParticipantId>,
     pub settings_open: bool,
     pub extra_args: String,
+    pub subtitle_languages: String,
     pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
 }
 
@@ -79,6 +80,7 @@ impl SppyApp {
             chat_seeded_for: None,
             settings_open: false,
             extra_args: config.player.extra_args.join(" "),
+            subtitle_languages: config.subtitle_languages.join(", "),
             confirm_kick: None,
         };
         let events = handle.subscribe_events();

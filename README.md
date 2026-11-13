@@ -58,6 +58,15 @@ State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
 - **My media folders** — if a file with the same fingerprint is found there (any name,
   any folder), it is played directly. A file can also be chosen by hand (📁).
 
+## Subtitles
+
+External subtitles (srt, ass, ssa, vtt, sub, idx) are found next to a video or in a
+`Subs/`, `Subtitles/` or `Sub/` folder beside it, including `Subs/<video name>/*.srt`.
+Names are compared ignoring case and punctuation: `Movie (2019) [EN].srt` belongs to
+`Movie.2019.mkv` with the label `en`. The player shows the subtitle matching the first of
+your *Subtitle languages* (Settings), otherwise an unlabeled one; the others are available
+as tracks (`j` in mpv).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
