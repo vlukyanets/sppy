@@ -1,6 +1,7 @@
 //! mpv JSON IPC connection: request/response matching by `request_id` plus an event stream.
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
