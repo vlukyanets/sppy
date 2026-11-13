@@ -173,3 +173,13 @@ async fn mpv_shows_the_first_external_subtitle() {
     let count = p.get_property("track-list/count").await.unwrap();
     assert!(count.as_u64().unwrap() >= 3, "video + two subtitles: {count}");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn dropping_the_player_removes_its_socket() {
+    let Some(p) = launch().await else { return };
+    let sppy_player::mpv::ipc::IpcPath::Socket(path) = p.ipc_path().clone();
+    assert!(path.exists());
+    drop(p);
+    assert!(!path.exists(), "{} left behind", path.display());
+}

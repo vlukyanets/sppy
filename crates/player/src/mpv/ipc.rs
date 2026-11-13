@@ -35,6 +35,38 @@ impl IpcPath {
     }
 }
 
+/// Where mpv sockets go: `$XDG_RUNTIME_DIR` (a per-user tmpfs cleared at logout) when set,
+/// otherwise the temp dir.
+#[cfg(unix)]
+pub fn socket_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Remove `sppy-<pid>-…` sockets and links left behind by processes that no longer exist
+/// (mpv only removes its socket on a clean exit). Best effort; Linux only (needs `/proc`).
+#[cfg(unix)]
+pub fn cleanup_stale_sockets(dir: &std::path::Path) {
+    let proc_fs = std::path::Path::new("/proc");
+    if !proc_fs.join("self").exists() {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let rest = name.strip_prefix("sppy-media-").or_else(|| name.strip_prefix("sppy-"));
+        let Some(pid) = rest.and_then(|r| r.split('-').next()).and_then(|p| p.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid != std::process::id() && !proc_fs.join(pid.to_string()).exists() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 /// A fresh, unique IPC path for one mpv instance.
 pub fn new_ipc_path() -> IpcPath {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -50,7 +82,7 @@ pub fn new_ipc_path() -> IpcPath {
     );
     #[cfg(unix)]
     {
-        IpcPath::Socket(std::env::temp_dir().join(format!("{unique}.sock")))
+        IpcPath::Socket(socket_dir().join(format!("{unique}.sock")))
     }
     #[cfg(windows)]
     {
@@ -197,5 +229,25 @@ mod tests {
             .unwrap();
         assert_eq!(v, serde_json::json!(42));
         assert!(events.recv().await.is_some(), "the lossy event is still delivered");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn stale_sockets_of_dead_processes_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let dead = dir.path().join("sppy-999999999-0-abc.sock");
+        let alive = dir.path().join(format!("sppy-{}-0-abc.sock", std::process::id()));
+        let unrelated = dir.path().join("other.sock");
+        for p in [&dead, &alive, &unrelated] {
+            std::fs::write(p, b"").unwrap();
+        }
+        cleanup_stale_sockets(dir.path());
+        assert!(!dead.exists());
+        assert!(alive.exists());
+        assert!(unrelated.exists());
     }
 }

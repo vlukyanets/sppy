@@ -85,6 +85,7 @@ pub struct MpvPlayer {
     kill: Option<oneshot::Sender<()>>,
     /// Temporary UTF-8 symlinks for non-UTF-8 paths of the current item.
     links: Vec<PathBuf>,
+    ipc_path: IpcPath,
 }
 
 /// mpv's JSON IPC only carries UTF-8. A path that is not valid UTF-8 is opened through a
@@ -129,6 +130,11 @@ fn secs_to_ms(v: &Value) -> Option<u64> {
 
 impl MpvPlayer {
     async fn launch(cfg: &MpvConfig) -> PlayerResult<MpvPlayer> {
+        #[cfg(unix)]
+        {
+            super::ipc::cleanup_stale_sockets(&super::ipc::socket_dir());
+            super::ipc::cleanup_stale_sockets(&std::env::temp_dir());
+        }
         let ipc_path = new_ipc_path();
         let mut child = tokio::process::Command::new(&cfg.path)
             .args(cfg.args(&ipc_path))
@@ -154,6 +160,7 @@ impl MpvPlayer {
         let pending_subs: Arc<Mutex<Vec<String>>> = Arc::default();
         tokio::spawn(pump(ipc.clone(), raw_events, tx.clone(), pending_subs.clone()));
 
+        let path_for_player = ipc_path.clone();
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
             let code = tokio::select! {
@@ -170,7 +177,19 @@ impl MpvPlayer {
                 let _ = std::fs::remove_file(p);
             }
         });
-        Ok(MpvPlayer { ipc, events, pending_subs, kill: Some(kill_tx), links: Vec::new() })
+        Ok(MpvPlayer {
+            ipc,
+            events,
+            pending_subs,
+            kill: Some(kill_tx),
+            links: Vec::new(),
+            ipc_path: path_for_player,
+        })
+    }
+
+    /// Where this player's IPC socket / pipe lives.
+    pub fn ipc_path(&self) -> &IpcPath {
+        &self.ipc_path
     }
 
     /// Read an mpv property (diagnostics and tests).
@@ -194,6 +213,12 @@ impl Drop for MpvPlayer {
             let _ = kill.send(());
         }
         remove_links(&mut self.links);
+        // A killed mpv cannot remove its own socket.
+        #[cfg(unix)]
+        {
+            let IpcPath::Socket(p) = &self.ipc_path;
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 
