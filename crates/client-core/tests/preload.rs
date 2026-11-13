@@ -58,9 +58,10 @@ async fn preload_mode_loads_local_file_after_download() {
     let path = loaded_path(&h).unwrap();
     assert_eq!(path, cache.path().join("media").join(&movie().0));
     assert_eq!(std::fs::read(&path).unwrap(), data());
-    assert!(
+    eventually("subtitle added", 5, || {
         h.remote().commands().iter().any(|c| matches!(c, FakeCmd::SubAdd(MediaSource::Path(_))))
-    );
+    })
+    .await;
     eventually("delivery is local", 5, || {
         snap(&h.handle).progress.values().any(|p| p.delivery == Delivery::Local)
     })

@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 
+use axum::serve::ListenerExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -112,6 +113,12 @@ pub async fn start(config: ServerConfig, data_dir: PathBuf) -> Result<ServerHand
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let app = http::router(state);
     let http_task = tokio::spawn(async move {
+        // Small control messages must not wait for Nagle's algorithm.
+        let listener = listener.tap_io(|tcp| {
+            if let Err(e) = tcp.set_nodelay(true) {
+                tracing::debug!("cannot set TCP_NODELAY: {e}");
+            }
+        });
         let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
             let _ = stop_rx.await;
         });

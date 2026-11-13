@@ -177,7 +177,7 @@ impl Ctx {
     async fn connect_once(&mut self) -> Outcome {
         let ws = match tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
-            tokio_tungstenite::connect_async(self.addr.ws_url()),
+            tokio_tungstenite::connect_async_with_config(self.addr.ws_url(), None, true),
         )
         .await
         {
