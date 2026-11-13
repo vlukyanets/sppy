@@ -290,3 +290,20 @@ async fn start_fails_cleanly_on_busy_port() {
     let err = sppy_server::start(cfg, dir.path().to_path_buf()).await.err().expect("must fail");
     assert!(matches!(err, sppy_server::ServerError::Bind { .. }));
 }
+
+#[tokio::test]
+async fn oversized_message_closes_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let (mut c, _) =
+        TestClient::join(server.local_addr, Auth::Invite { token: server.invite_token() }, "g")
+            .await;
+    let huge = format!("{{\"type\":\"Chat\",\"text\":\"{}\"}}", "x".repeat(2 * 1024 * 1024));
+    c.send_raw(&huge).await;
+    let rest = c.recv_until_closed().await;
+    assert!(
+        !rest.iter().any(|m| matches!(m, ServerMsg::Event(Event::Chat(_)))),
+        "the message was not processed"
+    );
+    server.shutdown().await;
+}

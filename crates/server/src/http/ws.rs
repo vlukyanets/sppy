@@ -18,9 +18,14 @@ use super::AppState;
 use crate::hub::HubInput;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest accepted client message (a big PlaylistAdd fits comfortably).
+const MAX_MESSAGE_BYTES: usize = 1 << 20;
 
 pub async fn upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| connection(socket, state))
+    // Client messages are small; refuse anything big before it is buffered.
+    ws.max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| connection(socket, state))
 }
 
 async fn send(sink: &mut SplitSink<WebSocket, Message>, msg: &ServerMsg) -> bool {
