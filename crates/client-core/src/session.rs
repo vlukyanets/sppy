@@ -422,6 +422,7 @@ impl<L: PlayerLauncher> Session<L> {
                     self.snap.is_host = p.is_host;
                 }
                 self.snap.room = Some(r);
+                self.reassert_status();
                 let ids: std::collections::HashSet<ItemId> = self
                     .snap
                     .room
@@ -478,6 +479,14 @@ impl<L: PlayerLauncher> Session<L> {
             },
             ServerMsg::Welcome(_) | ServerMsg::Reject { .. } | ServerMsg::Pong { .. } => {}
         }
+    }
+
+    /// "Waiting for alice, bob" while the server holds the room.
+    fn waiting_text(&self) -> Option<String> {
+        let hold = self.snap.playback.as_ref()?.hold.as_ref()?;
+        let room = self.snap.room.as_ref()?;
+        let names: Vec<String> = hold.waiting_for.iter().map(|p| nickname(room, *p)).collect();
+        Some(format!("Waiting for {}", names.join(", ")))
     }
 
     fn current_item_id(&self) -> Option<ItemId> {
@@ -764,6 +773,20 @@ impl<L: PlayerLauncher> Session<L> {
         }
     }
 
+    /// The client is the source of truth for its own status. If the server shows something
+    /// else for the item we have loaded (e.g. it restarted the same item and reset everyone to
+    /// Loading), say it again; otherwise the room would wait for us forever.
+    fn reassert_status(&self) {
+        let (Some(me), Some(room)) = (self.snap.me, &self.snap.room) else { return };
+        if self.media.item.is_none() || self.media.item != self.current_item_id() {
+            return;
+        }
+        let server_view = room.participants.iter().find(|p| p.id == me).map(|p| &p.status);
+        if server_view.is_some_and(|s| *s != self.media.status) {
+            self.send_status();
+        }
+    }
+
     fn send_status(&self) {
         if let Some(item_id) = self.media.item {
             self.send(ClientMsg::SetStatus { item_id, status: self.media.status.clone() });
@@ -945,18 +968,26 @@ impl<L: PlayerLauncher> Session<L> {
         match self.echo.observe(now, ev, position_ms) {
             Classified::Ours | Classified::Ignored => {}
             Classified::User(action) => {
-                let req =
-                    match action {
-                        UserAction::Pause { position_ms } => self.request(|req_id| {
-                            ClientMsg::Pause { req_id, position_ms: Some(position_ms) }
-                        }),
-                        UserAction::Play { position_ms } => self.request(|req_id| {
-                            ClientMsg::Play { req_id, position_ms: Some(position_ms) }
-                        }),
-                        UserAction::Seek { position_ms } => {
-                            self.request(|req_id| ClientMsg::Seek { req_id, position_ms })
+                let req = match action {
+                    UserAction::Pause { position_ms } => self.request(|req_id| ClientMsg::Pause {
+                        req_id,
+                        position_ms: Some(position_ms),
+                    }),
+                    UserAction::Play { position_ms } => {
+                        // The room may be waiting for someone: playing locally would just be
+                        // undone, so say why.
+                        if let Some(text) = self.waiting_text() {
+                            self.osd(&text).await;
                         }
-                    };
+                        self.request(|req_id| ClientMsg::Play {
+                            req_id,
+                            position_ms: Some(position_ms),
+                        })
+                    }
+                    UserAction::Seek { position_ms } => {
+                        self.request(|req_id| ClientMsg::Seek { req_id, position_ms })
+                    }
+                };
                 self.awaiting = Some((req, now + AWAIT_REPLY_MS));
             }
             Classified::RevertSpeed => {

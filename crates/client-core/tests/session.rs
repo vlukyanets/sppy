@@ -201,3 +201,56 @@ async fn load_failure_everywhere_skips_item() {
     let _ = PlayerEvent::Eof;
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn reselecting_the_current_item_does_not_wait_forever() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 8, || a.synced() && b.synced()).await;
+    // Double-click on the item that is already playing: the server restarts it and resets
+    // everyone to Loading; the players already have the file loaded.
+    let seq = snap(&a.handle).playback.unwrap().seq;
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    b.send(UiCommand::PlaylistSelect(ItemId(1)));
+    eventually("restarted from the beginning", 3, || {
+        snap(&a.handle).playback.is_some_and(|p| p.seq > seq && p.position_ms < 2_000)
+    })
+    .await;
+    eventually("hold released again", 5, || {
+        snap(&a.handle).playback.is_some_and(|p| p.hold.is_none())
+    })
+    .await;
+    eventually("both playing in sync", 8, || a.synced() && b.synced()).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn pressing_play_while_the_room_waits_explains_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = test_config();
+    cfg.stall_hold_secs = 1;
+    let server = start_server(dir.path(), cfg).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 8, || a.synced() && b.synced()).await;
+    b.remote().set_cache_ahead(0, false);
+    b.remote().set_buffering(true);
+    eventually("room waits for bob, a paused", 5, || a.remote().paused()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let waiting = |p: &Peer| {
+        p.remote()
+            .commands()
+            .iter()
+            .filter(|c| matches!(c, FakeCmd::Osd(t) if t == "Waiting for bob"))
+            .count()
+    };
+    let before = waiting(&a);
+    a.remote().user_pause(false);
+    eventually("explained in the player", 3, || waiting(&a) > before).await;
+    eventually("a paused again", 3, || a.remote().paused()).await;
+    server.shutdown().await;
+}
