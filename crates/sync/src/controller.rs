@@ -143,6 +143,11 @@ impl DriftController {
                 return out;
             }
             self.reseeks = 0;
+            // The residual of our own seek is a known error, even inside the dead band:
+            // close it down to the exit threshold instead of living with it.
+            if abs >= self.p.speed_exit_ms {
+                self.correcting = true;
+            }
         }
 
         let threshold = if self.correcting { self.p.speed_exit_ms } else { self.p.dead_band_ms };
@@ -156,7 +161,11 @@ impl DriftController {
 
         self.correcting = true;
         let max = self.p.max_speed_correction;
-        let factor = 1.0 - (drift as f64 / self.p.horizon_ms as f64).clamp(-max, max);
+        let min = self.p.min_speed_correction.min(max);
+        // Proportional, but never slower than `min` so small drifts close in seconds.
+        let p = (drift as f64 / self.p.horizon_ms as f64).clamp(-max, max);
+        let p = if p.abs() < min { min.copysign(p) } else { p };
+        let factor = 1.0 - p;
         let speed = target.room_speed * factor;
         if (speed - current_speed).abs() > SPEED_EPS {
             self.set_speed(speed, &mut out);

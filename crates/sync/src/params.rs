@@ -10,6 +10,8 @@ pub struct SyncParams {
     pub speed_exit_ms: u64,
     /// Maximum relative speed change, e.g. 0.08 = ±8 %.
     pub max_speed_correction: f64,
+    /// Minimum relative speed change while correcting, so small drifts close in seconds.
+    pub min_speed_correction: f64,
     /// Drift that maps to the full correction: factor = drift / horizon.
     pub horizon_ms: u64,
     /// Above this drift, seek instead of adjusting speed.
@@ -27,6 +29,7 @@ impl Default for SyncParams {
             dead_band_ms: 80,
             speed_exit_ms: 30,
             max_speed_correction: 0.08,
+            min_speed_correction: 0.02,
             horizon_ms: 10_000,
             seek_threshold_ms: 1500,
             settle_ms: 1000,

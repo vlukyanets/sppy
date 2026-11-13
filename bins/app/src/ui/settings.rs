@@ -101,6 +101,11 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 row(ui, "Settle time", &mut a.settle_ms);
                 row(ui, "Max seek lead", &mut a.max_seek_lead_ms);
                 row(ui, "Re-seek threshold", &mut a.reseek_threshold_ms);
+                ui.label("Min speed correction");
+                ui.add(
+                    egui::DragValue::new(&mut a.min_speed_correction).range(0.0..=0.2).speed(0.005),
+                );
+                ui.end_row();
                 ui.label("Max speed correction");
                 ui.add(
                     egui::DragValue::new(&mut a.max_speed_correction).range(0.0..=0.5).speed(0.005),

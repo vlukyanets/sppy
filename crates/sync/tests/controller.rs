@@ -227,3 +227,25 @@ fn seek_lead_shrinks_when_overshooting() {
     k.update(2000, &target(12_000), &obs(12_200, 1.0)); // overshot by 200
     assert_eq!(k.seek_lead_ms(), 300);
 }
+
+#[test]
+fn residual_inside_dead_band_after_own_seek_is_corrected() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0)); // seek
+    // Landed 60 ms behind: inside the dead band, but we know it is our seek's error.
+    let c = k.update(1_000, &target(11_000), &obs(10_940, 1.0));
+    assert!(speed_of(&c).is_some_and(|s| s > 1.0), "{c:?}");
+    // ...and the correction continues down to the exit threshold.
+    let c = k.update(1_250, &target(11_250), &obs(11_210, 1.02));
+    assert!(speed_of(&c).is_none_or(|s| s > 1.0), "still correcting: {c:?}");
+}
+
+#[test]
+fn correction_has_a_minimum_rate() {
+    let p = SyncParams::default();
+    let c = ctl().update(0, &target(10_000), &obs(10_100, 1.0));
+    let s = speed_of(&c).unwrap();
+    assert!(s <= 1.0 - p.min_speed_correction + 1e-9, "{s}");
+    let c = ctl().update(0, &target(10_000), &obs(9_900, 1.0));
+    assert!(speed_of(&c).unwrap() >= 1.0 + p.min_speed_correction - 1e-9);
+}
