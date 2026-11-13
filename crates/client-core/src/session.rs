@@ -646,19 +646,21 @@ impl<L: PlayerLauncher> Session<L> {
             };
             return Some(Resolved::Local { path, subtitles });
         }
-        if let Source::File { file_id } = &item.source
-            && self.config.mode == DeliveryMode::Preload
-            && !self.stream_fallback.contains(&item.item_id)
-        {
-            let (_, subs) = self.cache_paths(file_id, item);
+        if let Source::File { file_id } = &item.source {
+            // Spec §7.1: local copy, then a completed cache entry, then the delivery mode.
             if let Some(path) = self.cache.complete(file_id) {
                 self.cache.touch(file_id);
+                let (_, subs) = self.cache_paths(file_id, item);
                 let subtitles =
                     subs.into_iter().filter(|p| p.is_file()).map(MediaSource::Path).collect();
                 return Some(Resolved::Local { path, subtitles });
             }
-            self.downloader.enqueue(self.download_job(item, file_id)?, Priority::Current);
-            return Some(Resolved::Wait);
+            if self.config.mode == DeliveryMode::Preload
+                && !self.stream_fallback.contains(&item.item_id)
+            {
+                self.downloader.enqueue(self.download_job(item, file_id)?, Priority::Current);
+                return Some(Resolved::Wait);
+            }
         }
         Some(stream_source(base, item, token))
     }

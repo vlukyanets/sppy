@@ -150,3 +150,17 @@ async fn prefetches_next_item_and_clear_cache_keeps_playlist_files() {
     assert!(cache.path().join("media").join(&movie().0).is_file());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn stream_mode_uses_a_completed_cache_entry() {
+    let (dir, media, cache) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let server = media_server(dir.path(), media.path()).await;
+    std::fs::create_dir_all(cache.path().join("media")).unwrap();
+    std::fs::write(cache.path().join("media").join(&movie().0), b"cached").unwrap();
+    let config = ClientConfig { mode: DeliveryMode::Stream, ..preload_config(cache.path()) };
+    let h = host_with(&server, FakeConfig::default(), config).await;
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie() }]));
+    eventually("cached file loaded", 5, || loaded_path(&h).is_some()).await;
+    server.shutdown().await;
+}

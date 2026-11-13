@@ -138,3 +138,32 @@ async fn reports_reconnecting_when_server_down() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn nickname_held_by_a_dropped_session_is_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = test_config();
+    cfg.resume_grace_secs = 2;
+    let server = start_server(dir.path(), cfg).await;
+    // A previous run of the app: its connection dies without a Bye (crash, kill, sleep).
+    let proxy = Proxy::start(server.local_addr).await;
+    let old = parse_address(&format!("sppy://{}", proxy.addr)).unwrap();
+    let mut first = spawn_connection(old, AuthToken::Invite(server.invite_token()), "alice".into());
+    wait_connected(&mut first).await;
+    drop(proxy);
+    drop(first);
+    // The restarted app joins with the same nickname right away.
+    let addr = parse_address(&format!("sppy://{}", server.local_addr)).unwrap();
+    let mut h = spawn_connection(addr, AuthToken::Invite(server.invite_token()), "alice".into());
+    loop {
+        match next_event(&mut h).await {
+            ConnEvent::Connected { welcome } => {
+                assert_eq!(welcome.room.participants.len(), 1);
+                break;
+            }
+            ConnEvent::Rejected { code, .. } => panic!("gave up with {code:?}"),
+            _ => {}
+        }
+    }
+    server.shutdown().await;
+}

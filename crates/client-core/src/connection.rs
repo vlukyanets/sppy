@@ -22,6 +22,8 @@ const PING_BURST_INTERVAL: Duration = Duration::from_millis(100);
 const PING_INTERVAL: Duration = Duration::from_secs(2);
 /// No pong for this long means the link is dead (e.g. after laptop sleep).
 const PONG_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a taken nickname is retried (default resume grace is 60 s).
+const NICKNAME_RETRY: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthToken {
@@ -89,8 +91,17 @@ pub fn spawn_connection_at(
     let (tx, out_rx) = mpsc::unbounded_channel();
     let (ev_tx, events) = mpsc::unbounded_channel();
     let clock = Arc::new(Mutex::new(ClockEstimator::new()));
-    let ctx =
-        Ctx { addr, auth, nickname, out_rx, ev_tx, clock: clock.clone(), epoch, session: None };
+    let ctx = Ctx {
+        addr,
+        auth,
+        nickname,
+        out_rx,
+        ev_tx,
+        clock: clock.clone(),
+        epoch,
+        session: None,
+        nickname_taken_since: None,
+    };
     tokio::spawn(ctx.run());
     ConnectionHandle { tx, events, clock, epoch }
 }
@@ -112,6 +123,7 @@ struct Ctx {
     clock: Arc<Mutex<ClockEstimator>>,
     epoch: Instant,
     session: Option<String>,
+    nickname_taken_since: Option<Instant>,
 }
 
 impl Ctx {
@@ -203,6 +215,7 @@ impl Ctx {
         .flatten();
         match first {
             Some(ServerMsg::Welcome(w)) => {
+                self.nickname_taken_since = None;
                 self.session = Some(w.session_token.clone());
                 *self.clock.lock().expect("clock") = ClockEstimator::new();
                 if self.ev_tx.send(ConnEvent::Connected { welcome: w }).is_err() {
@@ -214,6 +227,18 @@ impl Ctx {
             {
                 self.session = None;
                 return Outcome::RetryNow;
+            }
+            Some(ServerMsg::Reject { code: ErrorCode::NicknameTaken, message }) => {
+                // Usually our own previous session (app restarted, crash): it frees the
+                // nickname when its resume grace expires, so keep trying for a while.
+                let since = *self.nickname_taken_since.get_or_insert_with(Instant::now);
+                if since.elapsed() < NICKNAME_RETRY {
+                    return Outcome::Failed(message);
+                }
+                let _ = self
+                    .ev_tx
+                    .send(ConnEvent::Rejected { code: ErrorCode::NicknameTaken, message });
+                return Outcome::Final;
             }
             Some(ServerMsg::Reject { code, message }) => {
                 let _ = self.ev_tx.send(ConnEvent::Rejected { code, message });
