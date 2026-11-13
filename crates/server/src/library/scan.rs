@@ -57,7 +57,8 @@ impl Library {
                 continue;
             }
             let mut found = Vec::new();
-            walk(root, &root.path, Path::new(""), 0, &mut found);
+            let mut visited = std::collections::HashSet::new();
+            walk(root, &root.path, Path::new(""), 0, &mut visited, &mut found);
             found.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
             lib.files.extend(found);
         }
@@ -164,7 +165,18 @@ impl Library {
     }
 }
 
-fn walk(root: &MediaRoot, dir: &Path, rel: &Path, depth: usize, out: &mut Vec<LibraryFile>) {
+fn walk(
+    root: &MediaRoot,
+    dir: &Path,
+    rel: &Path,
+    depth: usize,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    out: &mut Vec<LibraryFile>,
+) {
+    // Symlinked directories may form loops: visit each real directory once.
+    if !visited.insert(fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())) {
+        return;
+    }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -183,7 +195,7 @@ fn walk(root: &MediaRoot, dir: &Path, rel: &Path, depth: usize, out: &mut Vec<Li
         let Ok(meta) = fs::metadata(&path) else { continue };
         if meta.is_dir() {
             if depth < MAX_DEPTH {
-                walk(root, &path, &rel.join(&name), depth + 1, out);
+                walk(root, &path, &rel.join(&name), depth + 1, visited, out);
             }
         } else if is_video(&path) {
             videos.push((name, path, meta));
@@ -346,5 +358,20 @@ mod tests {
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].title, "Movie");
         assert_eq!(infos[0].subtitles.len(), 1);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use super::*;
+
+    #[test]
+    fn symlink_loop_is_scanned_once() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a/movie.mkv"), b"x").unwrap();
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("a/loop")).unwrap();
+        let lib = Library::scan(&[MediaRoot { name: "M".into(), path: dir.path().to_path_buf() }]);
+        assert_eq!(lib.files().count(), 1);
     }
 }

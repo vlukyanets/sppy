@@ -1134,3 +1134,19 @@ mod review_fixes {
         assert!(notice < room_update, "{effects:?}");
     }
 }
+
+#[test]
+fn playback_seq_strictly_increases_within_one_request() {
+    let mut r = room();
+    let h = host(&mut r);
+    let effects = add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+    let seqs: Vec<u64> = effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Broadcast { msg: ServerMsg::Playback(p) } => Some(p.seq),
+            _ => None,
+        })
+        .collect();
+    assert!(!seqs.is_empty());
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+}

@@ -20,8 +20,9 @@ impl LocalIndex {
     /// Recursive scan (any depth, video extensions only, hidden entries skipped). Blocking.
     pub fn scan(roots: &[PathBuf]) -> LocalIndex {
         let mut idx = LocalIndex::default();
+        let mut visited = std::collections::HashSet::new();
         for root in roots {
-            idx.walk(root, 0);
+            idx.walk(root, 0, &mut visited);
         }
         idx
     }
@@ -33,7 +34,11 @@ impl LocalIndex {
         self.fp_cache = fp_cache;
     }
 
-    fn walk(&mut self, dir: &Path, depth: usize) {
+    fn walk(&mut self, dir: &Path, depth: usize, visited: &mut std::collections::HashSet<PathBuf>) {
+        // Symlinked directories may form loops: visit each real directory once.
+        if !visited.insert(std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())) {
+            return;
+        }
         let Ok(rd) = std::fs::read_dir(dir) else { return };
         for e in rd.flatten() {
             if e.file_name().to_string_lossy().starts_with('.') {
@@ -43,7 +48,7 @@ impl LocalIndex {
             let Ok(meta) = std::fs::metadata(&path) else { continue };
             if meta.is_dir() {
                 if depth < MAX_DEPTH {
-                    self.walk(&path, depth + 1);
+                    self.walk(&path, depth + 1, visited);
                 }
             } else if is_video(&path) {
                 let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -146,5 +151,19 @@ mod tests {
         ]);
         assert_eq!(idx.len(), 2);
         assert_eq!(idx.find(&fingerprint(&wanted).unwrap()), Some(wanted));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use super::*;
+
+    #[test]
+    fn symlink_loop_is_indexed_once() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a/movie.mkv"), b"x").unwrap();
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("a/loop")).unwrap();
+        assert_eq!(LocalIndex::scan(&[dir.path().to_path_buf()]).len(), 1);
     }
 }

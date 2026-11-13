@@ -19,7 +19,8 @@ pub const DEFAULT_BACKOFF: [Duration; 5] = [
     Duration::from_secs(10),
     Duration::from_secs(30),
 ];
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
+/// Spec §5.3: progress is reported at most once per second.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(1000);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadJob {

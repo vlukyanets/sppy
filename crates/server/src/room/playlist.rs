@@ -85,9 +85,7 @@ impl Room {
         }
         let mut effects = Vec::new();
         if self.playback.item_id.is_none() {
-            effects.extend(self.change_item(now_ms, Some(ids[0])));
-            self.playback.paused = true;
-            effects.push(self.broadcast_playback());
+            effects.extend(self.change_item_paused(now_ms, Some(ids[0]), true));
         } else {
             effects.push(self.broadcast_room());
         }
@@ -170,6 +168,16 @@ impl Room {
 
     /// Make `item_id` current (skipping items whose file vanished), or clear the current item.
     pub(super) fn change_item(&mut self, now_ms: u64, item_id: Option<ItemId>) -> Vec<Effect> {
+        self.change_item_paused(now_ms, item_id, false)
+    }
+
+    /// Like [`Self::change_item`]; `paused` sets the human pause flag of the new item.
+    pub(super) fn change_item_paused(
+        &mut self,
+        now_ms: u64,
+        item_id: Option<ItemId>,
+        paused: bool,
+    ) -> Vec<Effect> {
         let mut effects = Vec::new();
         let mut next = item_id;
         while let Some(id) = next {
@@ -195,7 +203,7 @@ impl Room {
         self.playback.cause = None;
         match next {
             Some(id) => {
-                self.playback.paused = false;
+                self.playback.paused = paused;
                 self.playback.hold =
                     Some(Hold { reason: HoldReason::ItemStart, waiting_for: self.active_ids() });
                 effects.push(Self::notice(None, NoticeAction::ItemChanged { item_id: id }));
