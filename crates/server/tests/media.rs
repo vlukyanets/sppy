@@ -63,17 +63,35 @@ async fn media_range_206() {
 async fn subtitle_served() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _media) = media_server(dir.path()).await;
-    let (_c, w) =
+    let (mut c, w) =
         TestClient::join(server.local_addr, Auth::Invite { token: server.invite_token() }, "g")
             .await;
+    c.send(ClientMsg::GetLibrary).await;
+    let ServerMsg::Library { roots } =
+        c.recv_until(|m| matches!(m, ServerMsg::Library { .. })).await
+    else {
+        unreachable!()
+    };
+    let LibraryNode::Dir { children, .. } = &roots[0] else { panic!() };
+    let LibraryNode::File { subtitles, .. } = &children[0] else { panic!() };
+    let index = subtitles[0].index;
     let http = reqwest::Client::new();
-    let sub =
-        format!("http://{}/media/{}/sub/0?t={}", server.local_addr, movie_id().0, w.session_token);
+    let sub = format!(
+        "http://{}/media/{}/sub/{index}?t={}",
+        server.local_addr,
+        movie_id().0,
+        w.session_token
+    );
     let res = http.get(sub).send().await.unwrap();
     assert_eq!(res.status(), 200);
     assert!(res.text().await.unwrap().contains("hi"));
-    let missing =
-        format!("http://{}/media/{}/sub/7?t={}", server.local_addr, movie_id().0, w.session_token);
+    let missing = format!(
+        "http://{}/media/{}/sub/{}?t={}",
+        server.local_addr,
+        movie_id().0,
+        index ^ 1,
+        w.session_token
+    );
     assert_eq!(http.get(missing).send().await.unwrap().status(), 404);
     server.shutdown().await;
 }

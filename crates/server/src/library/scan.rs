@@ -165,6 +165,79 @@ impl Library {
     }
 }
 
+/// Subtitle folders next to videos: `Subs/`, `Subtitles/`, `Sub/` (any case).
+const SUBTITLE_DIRS: &[&str] = &["subs", "subtitles", "sub"];
+
+/// Lowercase; every run of non-alphanumeric characters becomes one `.`.
+/// `Movie (2019) [EN]` → `movie.2019.en`, so differently punctuated names still match.
+pub(crate) fn normalize_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut sep = false;
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            if sep && !out.is_empty() {
+                out.push('.');
+            }
+            sep = false;
+            out.extend(c.to_lowercase());
+        } else {
+            sep = true;
+        }
+    }
+    out
+}
+
+/// Stable subtitle id: the first 32 bits of `blake3(path relative to the media root)`.
+fn subtitle_index(root: &Path, path: &Path) -> u32 {
+    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let h = blake3::hash(rel.as_bytes());
+    u32::from_le_bytes(h.as_bytes()[..4].try_into().expect("4 bytes"))
+}
+
+fn stem_of(name: &str) -> String {
+    Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// A subtitle file found for the videos of one folder.
+struct SubCandidate {
+    path: PathBuf,
+    /// Normalized file stem.
+    stem: String,
+    /// From `Subs/<video name>/`: belongs to that (normalized) video name whatever its own name.
+    video: Option<String>,
+}
+
+fn subtitle_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && is_subtitle(p))
+        .filter(|p| !p.file_name().is_some_and(|n| hidden(&n.to_string_lossy())))
+        .collect()
+}
+
+/// Subtitles of a `Subs/` folder: loose files, and `Subs/<video name>/` folders.
+fn collect_subs_dir(subs_dir: &Path, out: &mut Vec<SubCandidate>) {
+    for path in subtitle_files(subs_dir) {
+        let stem =
+            normalize_name(&stem_of(&path.file_name().unwrap_or_default().to_string_lossy()));
+        out.push(SubCandidate { path, stem, video: None });
+    }
+    let Ok(rd) = fs::read_dir(subs_dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let video = normalize_name(&e.file_name().to_string_lossy());
+        for path in subtitle_files(&p) {
+            let stem =
+                normalize_name(&stem_of(&path.file_name().unwrap_or_default().to_string_lossy()));
+            out.push(SubCandidate { path, stem, video: Some(video.clone()) });
+        }
+    }
+}
+
 fn walk(
     root: &MediaRoot,
     dir: &Path,
@@ -194,50 +267,53 @@ fn walk(
         let path = entry.path();
         let Ok(meta) = fs::metadata(&path) else { continue };
         if meta.is_dir() {
+            if SUBTITLE_DIRS.contains(&name.to_lowercase().as_str()) {
+                collect_subs_dir(&path, &mut subs);
+            }
             if depth < MAX_DEPTH {
                 walk(root, &path, &rel.join(&name), depth + 1, visited, out);
             }
         } else if is_video(&path) {
             videos.push((name, path, meta));
         } else if is_subtitle(&path) {
-            subs.push(name);
+            subs.push(SubCandidate { stem: normalize_name(&stem_of(&name)), path, video: None });
         }
     }
-    subs.sort();
-    let stem_of = |name: &str| {
-        Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
-    };
-    let video_stems: Vec<String> = videos.iter().map(|(name, _, _)| stem_of(name)).collect();
-    // Each subtitle belongs to the video with the longest stem it starts with (case-insensitive):
-    // `Movie.2019.srt` goes to `Movie.2019.mkv`, not to `Movie.mkv` with label "2019".
-    let mut per_video: Vec<Vec<(Option<String>, String)>> = vec![Vec::new(); videos.len()];
-    for sub in &subs {
-        let sub_stem = stem_of(sub);
-        let sub_lower = sub_stem.to_lowercase();
+    subs.sort_by(|a, b| a.path.cmp(&b.path));
+    let video_stems: Vec<String> =
+        videos.iter().map(|(name, _, _)| normalize_name(&stem_of(name))).collect();
+    // A subtitle belongs to the video whose normalized name it equals or starts with
+    // (followed by a separator); the longest such name wins, so `Movie.2019.srt` goes to
+    // `Movie.2019.mkv` rather than to `Movie.mkv` with label "2019".
+    let mut per_video: Vec<Vec<(Option<String>, PathBuf)>> = vec![Vec::new(); videos.len()];
+    for sub in subs {
+        if let Some(target) = &sub.video {
+            if let Some(vi) = video_stems.iter().position(|v| v == target) {
+                per_video[vi].push((Some(sub.stem.clone()).filter(|s| !s.is_empty()), sub.path));
+            }
+            continue;
+        }
         let best = video_stems
             .iter()
             .enumerate()
             .filter(|(_, v)| {
-                let v = v.to_lowercase();
-                sub_lower == v || sub_lower.starts_with(&format!("{v}."))
+                !v.is_empty() && (sub.stem == **v || sub.stem.starts_with(&format!("{v}.")))
             })
-            .max_by_key(|(_, v)| v.chars().count());
+            .max_by_key(|(_, v)| v.len());
         if let Some((vi, v)) = best {
-            let rest: String = sub_stem.chars().skip(v.chars().count() + 1).collect();
-            per_video[vi].push(((!rest.is_empty()).then_some(rest), sub.clone()));
+            let rest = sub.stem.get(v.len() + 1..).unwrap_or_default().to_owned();
+            per_video[vi].push(((!rest.is_empty()).then_some(rest), sub.path));
         }
     }
     for ((name, path, meta), matched) in videos.into_iter().zip(per_video) {
-        let stem = stem_of(&name);
         let subtitles: Vec<(Subtitle, PathBuf)> = matched
             .into_iter()
-            .enumerate()
-            .map(|(index, (label, file))| {
-                let ext = Path::new(&file)
+            .map(|(label, sub_path)| {
+                let ext = sub_path
                     .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
-                (Subtitle { index: index as u32, label, ext }, dir.join(&file))
+                (Subtitle { index: subtitle_index(&root.path, &sub_path), label, ext }, sub_path)
             })
             .collect();
         let rel_path = rel.join(&name);
@@ -247,7 +323,7 @@ fn walk(
             abs_path: path,
             size: meta.len(),
             mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-            title: stem,
+            title: stem_of(&name),
             subtitles,
             fingerprint: None,
             rel_path,
@@ -314,8 +390,9 @@ mod tests {
         let lib = Library::scan(&roots(dir.path()));
         let f = lib.files().next().unwrap();
         let subs: Vec<_> =
-            f.subtitles.iter().map(|(s, _)| (s.index, s.label.clone(), s.ext.clone())).collect();
-        assert_eq!(subs, vec![(0, Some("en".into()), "ass".into()), (1, None, "srt".into())]);
+            f.subtitles.iter().map(|(s, _)| (s.label.clone(), s.ext.clone())).collect();
+        assert_eq!(subs, vec![(Some("en".into()), "ass".into()), (None, "srt".into())]);
+        assert_ne!(f.subtitles[0].0.index, f.subtitles[1].0.index);
         assert_eq!(f.title, "Movie");
     }
 
@@ -406,7 +483,7 @@ mod subtitle_match_tests {
         std::fs::write(dir.path().join("Серия 1.mkv"), b"v").unwrap();
         std::fs::write(dir.path().join("серия 1.RU.SRT"), b"s").unwrap();
         let lib = Library::scan(&[MediaRoot { name: "M".into(), path: dir.path().to_path_buf() }]);
-        assert_eq!(subs_of(&lib, "Серия 1"), vec![(Some("RU".into()), "серия 1.RU.SRT".into())]);
+        assert_eq!(subs_of(&lib, "Серия 1"), vec![(Some("ru".into()), "серия 1.RU.SRT".into())]);
     }
 
     #[test]
@@ -418,5 +495,89 @@ mod subtitle_match_tests {
         let lib = Library::scan(&[MediaRoot { name: "M".into(), path: dir.path().to_path_buf() }]);
         assert_eq!(subs_of(&lib, "Movie.2019"), vec![(None, "Movie.2019.srt".into())]);
         assert_eq!(subs_of(&lib, "Movie"), vec![(Some("en".into()), "Movie.en.srt".into())]);
+    }
+}
+
+#[cfg(test)]
+mod subtitle_layout_tests {
+    use super::*;
+
+    fn put(root: &Path, rel: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+
+    fn scan(root: &Path) -> Library {
+        Library::scan(&[MediaRoot { name: "M".into(), path: root.to_path_buf() }])
+    }
+
+    fn subs_of(lib: &Library, title: &str) -> Vec<(Option<String>, String)> {
+        let f = lib.files().find(|f| f.title == title).unwrap();
+        f.subtitles
+            .iter()
+            .map(|(s, p)| (s.label.clone(), p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn fuzzy_names_match() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Movie.2019.1080p.mkv");
+        put(dir.path(), "Movie (2019) 1080p.srt");
+        put(dir.path(), "movie_2019_1080p [EN forced].ass");
+        let lib = scan(dir.path());
+        assert_eq!(
+            subs_of(&lib, "Movie.2019.1080p"),
+            vec![
+                (None, "Movie (2019) 1080p.srt".into()),
+                (Some("en.forced".into()), "movie_2019_1080p [EN forced].ass".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn subs_folder_next_to_the_video() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Show/Episode 01.mkv");
+        put(dir.path(), "Show/Episode 02.mkv");
+        put(dir.path(), "Show/Subs/Episode 01.en.srt");
+        put(dir.path(), "Show/SUBTITLES/Episode 02.srt");
+        let lib = scan(dir.path());
+        assert_eq!(
+            subs_of(&lib, "Episode 01"),
+            vec![(Some("en".into()), "Episode 01.en.srt".into())]
+        );
+        assert_eq!(subs_of(&lib, "Episode 02"), vec![(None, "Episode 02.srt".into())]);
+    }
+
+    #[test]
+    fn per_video_folder_inside_subs_takes_any_name() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Show/Episode 01.mkv");
+        put(dir.path(), "Show/Subs/Episode 01/2_English.srt");
+        put(dir.path(), "Show/Subs/Episode 01/3_Russian.srt");
+        put(dir.path(), "Show/Subs/Episode 02/2_English.srt");
+        let lib = scan(dir.path());
+        assert_eq!(
+            subs_of(&lib, "Episode 01"),
+            vec![
+                (Some("2.english".into()), "2_English.srt".into()),
+                (Some("3.russian".into()), "3_Russian.srt".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn subtitle_index_is_stable_when_files_are_added() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Movie.mkv");
+        put(dir.path(), "Movie.ru.srt");
+        let before = scan(dir.path()).files().next().unwrap().subtitles[0].0.index;
+        put(dir.path(), "Movie.en.srt"); // sorts before "ru"
+        let lib = scan(dir.path());
+        let f = lib.files().next().unwrap();
+        let ru = f.subtitles.iter().find(|(s, _)| s.label.as_deref() == Some("ru")).unwrap();
+        assert_eq!(ru.0.index, before);
     }
 }

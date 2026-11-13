@@ -46,7 +46,7 @@ async fn file_item_streams_from_server() {
         .remote()
         .commands()
         .into_iter()
-        .filter(|c| matches!(c, FakeCmd::SubAdd(MediaSource::Url(u)) if u.contains("/sub/0?t=")))
+        .filter(|c| matches!(c, FakeCmd::SubAdd(MediaSource::Url(u)) if u.contains("/sub/") && u.contains("?t=")))
         .collect();
     assert_eq!(subs.len(), 1);
     eventually("progress reported as stream", 5, || {

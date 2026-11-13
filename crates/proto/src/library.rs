@@ -9,10 +9,13 @@ pub struct Fingerprint {
     pub hash: String,
 }
 
-/// External subtitle next to a video file.
+/// External subtitle of a video file (next to it or in a `Subs/` folder).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Subtitle {
+    /// Stable identifier (hash of the subtitle's path), not a position: it survives rescans
+    /// and other subtitles being added. Used in `/media/{file_id}/sub/{index}`.
     pub index: u32,
+    /// Normalized remainder of the file name after the video's name, e.g. `en`, `ru.forced`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub ext: String,
