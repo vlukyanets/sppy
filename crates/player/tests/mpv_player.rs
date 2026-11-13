@@ -137,3 +137,20 @@ async fn mpv_quit_gives_exited() {
     let rest = tokio::time::timeout(Duration::from_secs(5), p.next_event()).await.unwrap();
     assert_eq!(rest, None);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mpv_opens_non_utf8_path() {
+    use std::os::unix::ffi::OsStrExt;
+    let Some(mut p) = launch().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let Some(clip) = make_clip(dir.path(), 2) else { return };
+    let odd = dir.path().join(std::ffi::OsStr::from_bytes(b"film-\xff.mkv"));
+    std::fs::rename(&clip, &odd).unwrap();
+    p.load(MediaSource::Path(odd), vec![]).await.unwrap();
+    let ev = wait_for(&mut p, 10, |e| {
+        matches!(e, PlayerEvent::FileLoaded { .. } | PlayerEvent::LoadFailed { .. })
+    })
+    .await;
+    assert!(matches!(ev, PlayerEvent::FileLoaded { duration_ms: Some(_), .. }), "{ev:?}");
+}

@@ -92,9 +92,17 @@ impl MpvIpc {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let reader_pending = pending.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(reader).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                match parse_line(&line) {
+            let mut reader = BufReader::new(reader);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                // mpv may pass through non-UTF-8 bytes (e.g. odd tags): never drop the link for that.
+                let line = String::from_utf8_lossy(&buf);
+                match parse_line(line.trim_end()) {
                     Ok(MpvIncoming::Reply { request_id, error, data }) => {
                         let tx = reader_pending.lock().expect("pending").remove(&request_id);
                         if let Some(tx) = tx {
@@ -154,4 +162,39 @@ async fn open(path: &IpcPath) -> std::io::Result<Halves> {
     let client = tokio::net::windows::named_pipe::ClientOptions::new().open(name)?;
     let (r, w) = tokio::io::split(client);
     Ok((Box::new(r), Box::new(w)))
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn invalid_utf8_line_does_not_kill_the_connection() {
+        let (ours, theirs) = tokio::io::duplex(4096);
+        let (r, w) = tokio::io::split(ours);
+        let (ipc, mut events) = MpvIpc::start(Box::new(r), Box::new(w));
+        let (their_r, mut their_w) = tokio::io::split(theirs);
+        tokio::spawn(async move {
+            // An event whose title is not valid UTF-8, then the reply to the command.
+            their_w
+                .write_all(b"{\"event\":\"x\",\"name\":\"media-title\",\"data\":\"\xff\xfe\"}\n")
+                .await
+                .unwrap();
+            let mut lines = BufReader::new(their_r).lines();
+            let _cmd = lines.next_line().await.unwrap();
+            their_w
+                .write_all(b"{\"request_id\":1,\"error\":\"success\",\"data\":42}\n")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        let v = ipc
+            .command(vec![serde_json::json!("get_property"), serde_json::json!("x")])
+            .await
+            .unwrap();
+        assert_eq!(v, serde_json::json!(42));
+        assert!(events.recv().await.is_some(), "the lossy event is still delivered");
+    }
 }

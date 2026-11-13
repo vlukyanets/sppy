@@ -83,12 +83,43 @@ pub struct MpvPlayer {
     events: mpsc::UnboundedReceiver<PlayerEvent>,
     pending_subs: Arc<Mutex<Vec<String>>>,
     kill: Option<oneshot::Sender<()>>,
+    /// Temporary UTF-8 symlinks for non-UTF-8 paths of the current item.
+    links: Vec<PathBuf>,
 }
 
-fn source_arg(src: &MediaSource) -> String {
+/// mpv's JSON IPC only carries UTF-8. A path that is not valid UTF-8 is opened through a
+/// UTF-8-named symlink in the temp dir (Unix); the link is kept until the next load.
+fn source_arg(src: &MediaSource, links: &mut Vec<PathBuf>) -> PlayerResult<String> {
     match src {
-        MediaSource::Path(p) => p.display().to_string(),
-        MediaSource::Url(u) => u.clone(),
+        MediaSource::Url(u) => Ok(u.clone()),
+        MediaSource::Path(p) => match p.to_str() {
+            Some(s) => Ok(s.to_owned()),
+            None => utf8_alias(p, links),
+        },
+    }
+}
+
+#[cfg(unix)]
+fn utf8_alias(path: &std::path::Path, links: &mut Vec<PathBuf>) -> PlayerResult<String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let link = std::env::temp_dir().join(format!("sppy-media-{}-{n}.{ext}", std::process::id()));
+    std::os::unix::fs::symlink(path, &link)
+        .map_err(|e| PlayerError::Ipc(format!("cannot alias {}: {e}", path.display())))?;
+    links.push(link.clone());
+    Ok(link.to_string_lossy().into_owned())
+}
+
+#[cfg(not(unix))]
+fn utf8_alias(path: &std::path::Path, _links: &mut Vec<PathBuf>) -> PlayerResult<String> {
+    Err(PlayerError::Ipc(format!("path is not valid Unicode: {}", path.display())))
+}
+
+fn remove_links(links: &mut Vec<PathBuf>) {
+    for l in links.drain(..) {
+        let _ = std::fs::remove_file(l);
     }
 }
 
@@ -139,7 +170,7 @@ impl MpvPlayer {
                 let _ = std::fs::remove_file(p);
             }
         });
-        Ok(MpvPlayer { ipc, events, pending_subs, kill: Some(kill_tx) })
+        Ok(MpvPlayer { ipc, events, pending_subs, kill: Some(kill_tx), links: Vec::new() })
     }
 
     /// Ask mpv to quit (exit code 0).
@@ -157,6 +188,7 @@ impl Drop for MpvPlayer {
         if let Some(kill) = self.kill.take() {
             let _ = kill.send(());
         }
+        remove_links(&mut self.links);
     }
 }
 
@@ -241,8 +273,16 @@ impl Player for MpvPlayer {
     }
 
     async fn load(&mut self, media: MediaSource, subtitles: Vec<MediaSource>) -> PlayerResult {
-        *self.pending_subs.lock().expect("subs") = subtitles.iter().map(source_arg).collect();
-        self.cmd(vec![json!("loadfile"), json!(source_arg(&media)), json!("replace")]).await
+        remove_links(&mut self.links);
+        let mut links = Vec::new();
+        let subs = subtitles
+            .iter()
+            .map(|s| source_arg(s, &mut links))
+            .collect::<PlayerResult<Vec<_>>>()?;
+        let src = source_arg(&media, &mut links)?;
+        self.links = links;
+        *self.pending_subs.lock().expect("subs") = subs;
+        self.cmd(vec![json!("loadfile"), json!(src), json!("replace")]).await
     }
 
     async fn play(&mut self) -> PlayerResult {
