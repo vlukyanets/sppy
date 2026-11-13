@@ -23,16 +23,23 @@ async fn two_clients_stay_within_80ms() {
     let mut worst_pair = 0i64;
     let mut worst_a = 0i64;
     let mut worst_b = 0i64;
+    let (mut drifts_a, mut drifts_b) = (Vec::new(), Vec::new());
     for _ in 0..(20_000 / 250) {
         let (pa, pb) = (a.remote().position_ms() as i64, b.remote().position_ms() as i64);
         worst_pair = worst_pair.max((pa - pb).abs());
-        worst_a = worst_a.max(a.drift().abs());
-        worst_b = worst_b.max(b.drift().abs());
+        let (da, db) = (a.drift(), b.drift());
+        drifts_a.push(da);
+        drifts_b.push(db);
+        worst_a = worst_a.max(da.abs());
+        worst_b = worst_b.max(db.abs());
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    assert!(worst_pair < 160, "pairwise {worst_pair}");
-    assert!(worst_a < 80, "a {worst_a}");
-    assert!(worst_b < 80, "b {worst_b}");
+    let report = format!(
+        "pairwise {worst_pair}, a {worst_a}, b {worst_b}; drifts a={drifts_a:?} b={drifts_b:?}"
+    );
+    assert!(worst_pair < 160, "{report}");
+    assert!(worst_a < 80, "{report}");
+    assert!(worst_b < 80, "{report}");
     server.shutdown().await;
 }
 

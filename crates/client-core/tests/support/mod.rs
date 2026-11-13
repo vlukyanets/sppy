@@ -14,11 +14,31 @@ pub fn config(nick: &str) -> ClientConfig {
     ClientConfig { nickname: nick.into(), ..ClientConfig::default() }
 }
 
+thread_local! {
+    /// Recent sync observations of this test (each #[tokio::test] runs on its own thread),
+    /// printed when a wait times out.
+    static TRACE: std::cell::RefCell<std::collections::VecDeque<String>> = Default::default();
+}
+
+fn trace(line: String) {
+    TRACE.with(|t| {
+        let mut t = t.borrow_mut();
+        t.push_back(line);
+        while t.len() > 40 {
+            t.pop_front();
+        }
+    });
+}
+
 /// Poll the snapshot (and fakes) until `pred` holds.
 pub async fn eventually(what: &str, secs: u64, mut pred: impl FnMut() -> bool) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let start = tokio::time::Instant::now();
+    let deadline = start + Duration::from_secs(secs);
     while !pred() {
-        assert!(tokio::time::Instant::now() < deadline, "timed out waiting for: {what}");
+        if tokio::time::Instant::now() >= deadline {
+            let recent = TRACE.with(|t| t.borrow().iter().cloned().collect::<Vec<_>>().join("\n"));
+            panic!("timed out waiting for: {what}\nrecent sync observations:\n{recent}");
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -41,7 +61,19 @@ impl Peer {
     }
     /// Playing and within the dead band of the room position.
     pub fn synced(&self) -> bool {
-        self.launcher.remote().is_some_and(|r| !r.paused()) && self.drift().abs() < 80
+        let Some(r) = self.launcher.remote() else { return false };
+        let s = snap(&self.handle);
+        let drift = self.handle.expected_position_ms().map(|e| r.position_ms() as i64 - e as i64);
+        trace(format!(
+            "p{:?} drift={drift:?} paused={} speed={:.4} pos={} offset={:?} hold={}",
+            s.me.map(|m| m.0),
+            r.paused(),
+            r.speed(),
+            r.position_ms(),
+            s.server_offset_ms,
+            s.playback.as_ref().is_some_and(|p| p.hold.is_some()),
+        ));
+        !r.paused() && drift.is_some_and(|d| d.abs() < 80)
     }
     pub fn drift(&self) -> i64 {
         let expected = self.handle.expected_position_ms().expect("expected position") as i64;
