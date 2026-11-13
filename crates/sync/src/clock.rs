@@ -3,6 +3,8 @@
 use std::collections::VecDeque;
 
 const WINDOW: usize = 16;
+/// Tolerance on top of the RTT bounds before two samples are considered inconsistent.
+const JUMP_MARGIN_MS: i64 = 20;
 
 #[derive(Debug, Clone, Copy)]
 struct Sample {
@@ -29,6 +31,15 @@ impl ClockEstimator {
         let rtt_ms = t_recv_ms - t_send_ms;
         let midpoint = (t_send_ms + t_recv_ms) as i64 / 2;
         let offset_ms = server_ms as i64 - midpoint;
+        // Each sample bounds the true offset to ±rtt/2. A sample that cannot agree with an
+        // older one means a clock jump (e.g. the machine slept): forget the old samples.
+        let consistent = |s: &Sample| {
+            let slack = (s.rtt_ms + rtt_ms) as i64 / 2 + JUMP_MARGIN_MS;
+            (s.offset_ms - offset_ms).abs() <= slack
+        };
+        if !self.samples.iter().all(consistent) {
+            self.samples.clear();
+        }
         self.samples.push_back(Sample { rtt_ms, offset_ms });
         while self.samples.len() > WINDOW {
             self.samples.pop_front();

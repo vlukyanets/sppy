@@ -53,3 +53,21 @@ fn recv_before_send_ignored() {
     c.add_sample(1000, 5000, 900);
     assert_eq!(c.offset_ms(), None);
 }
+
+#[test]
+fn clock_jump_discards_inconsistent_old_samples() {
+    let mut c = ClockEstimator::new();
+    c.add_sample(0, 1_005, 10); // rtt 10, offset 1000
+    // The machine slept 5 s: the local monotonic clock stood still, the server's did not.
+    c.add_sample(1_000, 7_050, 1_100); // rtt 100, offset 6000
+    assert_eq!(c.offset_ms(), Some(6_000));
+}
+
+#[test]
+fn consistent_samples_are_kept() {
+    let mut c = ClockEstimator::new();
+    c.add_sample(0, 1_005, 10); // rtt 10, offset 1000 (±5)
+    c.add_sample(1_000, 2_080, 1_100); // rtt 100, offset 1030 (±50) — consistent
+    assert_eq!(c.offset_ms(), Some(1_000));
+    assert_eq!(c.best_rtt_ms(), Some(10));
+}
