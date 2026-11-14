@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use sppy_common::config::MediaRoot;
 use sppy_common::media::{is_subtitle, is_video};
+use sppy_common::natural::natural_cmp;
 use sppy_proto::{FileId, Fingerprint, LibraryNode, Subtitle};
 
 use super::FingerprintCache;
@@ -128,12 +129,15 @@ impl Library {
             }
         }
         fn build(name: String, dir: Dir<'_>) -> LibraryNode {
+            let mut dirs: Vec<(String, Dir<'_>)> = dir.dirs.into_values().collect();
+            dirs.sort_by(|a, b| natural_cmp(&a.0, &b.0));
             let mut children: Vec<LibraryNode> =
-                dir.dirs.into_values().map(|(n, d)| build(n, d)).collect();
+                dirs.into_iter().map(|(n, d)| build(n, d)).collect();
             let mut files = dir.files;
-            files.sort_by_key(|f| {
-                f.rel_path.file_name().map(|n| n.to_string_lossy().to_lowercase())
-            });
+            let file_name = |f: &LibraryFile| {
+                f.rel_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            };
+            files.sort_by(|a, b| natural_cmp(&file_name(a), &file_name(b)));
             children.extend(files.into_iter().map(|f| {
                 LibraryNode::File {
                     file_id: f.file_id.clone(),
@@ -637,5 +641,34 @@ mod vobsub_tests {
         assert_eq!(f.subtitles.len(), 1);
         assert_eq!(f.subtitles[0].0.ext, "sub");
         assert!(f.subtitle_companions.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tree_order_tests {
+    use super::*;
+
+    #[test]
+    fn tree_uses_natural_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["Season 10/e1.mkv", "Season 2/e1.mkv", "Season 1/e10.mkv", "Season 1/e2.mkv"] {
+            let p = dir.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+        let lib =
+            Library::scan(&[MediaRoot { name: "Show".into(), path: dir.path().to_path_buf() }]);
+        let LibraryNode::Dir { children, .. } = &lib.tree()[0] else { panic!() };
+        let names = |nodes: &[LibraryNode]| -> Vec<String> {
+            nodes
+                .iter()
+                .map(|n| match n {
+                    LibraryNode::Dir { name, .. } | LibraryNode::File { name, .. } => name.clone(),
+                })
+                .collect()
+        };
+        assert_eq!(names(children), vec!["Season 1", "Season 2", "Season 10"]);
+        let LibraryNode::Dir { children: s1, .. } = &children[0] else { panic!() };
+        assert_eq!(names(s1), vec!["e2.mkv", "e10.mkv"]);
     }
 }
