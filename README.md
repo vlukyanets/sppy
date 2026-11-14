@@ -9,11 +9,20 @@ own disk, or from any URL mpv can open.
 
 Status: stage 1 (mpv only).
 
-## Requirements
+## Install
 
-- [mpv](https://mpv.io) on `PATH` (or set its path in Settings).
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for web URLs in the playlist.
-- Rust (stable) to build: `cargo build --release`.
+Download the archive for your system from
+[Releases](https://github.com/vlukyanets/sppy/releases) and unpack it: `sppy` is the app,
+`sppy-server` the optional headless server.
+
+sppy drives a separately installed [mpv](https://mpv.io):
+
+- Windows: `winget install mpv` (or download mpv and set its path in ⚙ Settings).
+- Linux: install `mpv` from your distribution.
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is needed for web links in the playlist.
+
+To build from source instead: `cargo build --release -p sppy-app -p sppy-server-cli`.
 
 ## Quick start: host from the app
 

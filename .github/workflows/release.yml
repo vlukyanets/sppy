@@ -1,0 +1,72 @@
+name: Release
+
+# Tag vX.Y.Z to publish a release; run manually to only build the archives.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked -p sppy-app -p sppy-server-cli
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          name="sppy-${GITHUB_REF_NAME//\//-}-${{ matrix.platform }}"
+          mkdir "$name"
+          cp target/release/sppy target/release/sppy-server README.md LICENSE-MIT LICENSE-APACHE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ref = $env:GITHUB_REF_NAME -replace '/', '-'
+          $name = "sppy-$ref-${{ matrix.platform }}"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/release/sppy.exe, target/release/sppy-server.exe, README.md, LICENSE-MIT, LICENSE-APACHE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: ${{ env.ASSET }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "sppy $GITHUB_REF_NAME"
+          --generate-notes
