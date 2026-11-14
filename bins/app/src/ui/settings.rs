@@ -14,9 +14,19 @@ fn pick_folder() -> Option<PathBuf> {
 pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     let mut open = app.ui.settings_open;
     let mut save = false;
+    let mut restart = false;
     egui::Window::new("Settings").open(&mut open).vscroll(true).show(ctx, |ui| {
         let c = &mut app.config;
-        ui.heading("Player");
+        ui.horizontal(|ui| {
+            ui.heading("Player");
+            if ui
+                .small_button("Restart player")
+                .on_hover_text("Apply the player settings now")
+                .clicked()
+            {
+                restart = true;
+            }
+        });
         egui::Grid::new("player").num_columns(2).show(ui, |ui| {
             ui.label("mpv path");
             let mut path = c.player.path.display().to_string();
@@ -161,11 +171,16 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             if ui.button("Save").clicked() {
                 save = true;
             }
-            ui.weak("Player, sync and hosting settings apply on the next start.");
+            ui.weak(
+                "Sync and hosting settings apply on the next start; the player on Restart player.",
+            );
         });
     });
     app.ui.settings_open = open;
-    if save {
+    if save || restart {
         app.save_config();
+    }
+    if restart {
+        app.restart_player();
     }
 }

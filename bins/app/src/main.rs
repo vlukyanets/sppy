@@ -1,8 +1,13 @@
 //! sppy desktop app: a small egui window around `sppy-client-core`.
 
+// Release builds on Windows are GUI apps: no console window.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod host;
+mod log;
 mod logging;
+mod search;
 mod ui;
 
 use anyhow::Context;
@@ -31,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     });
     let handle = {
         let _enter = rt.enter();
-        spawn_client(config.clone(), launcher)
+        spawn_client(config.clone(), launcher.clone())
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -42,7 +47,9 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "sppy",
         options,
-        Box::new(move |cc| Ok(Box::new(app::SppyApp::new(cc, rt, handle, config, paths)))),
+        Box::new(move |cc| {
+            Ok(Box::new(app::SppyApp::new(cc, rt, handle, launcher, config, paths)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
 }

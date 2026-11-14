@@ -1,29 +1,33 @@
 //! Application state and the top-level layout.
 
-use std::collections::VecDeque;
-
 use sppy_client_core::api::{ClientHandle, Snapshot, UiCommand, UiEvent};
 use sppy_client_core::config::{ClientConfig, ClientPaths, SavedServer};
+use sppy_player::mpv::{MpvConfig, MpvLauncher};
 use sppy_server::ServerHandle;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 
+use crate::log::EventLog;
+pub use crate::log::LogKind;
 use crate::ui;
 
-const LOG_LINES: usize = 200;
+const LOG_LINES: usize = 300;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LogKind {
-    Chat,
-    Notice,
-    Error,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Playlist,
+    Library,
 }
 
 /// Purely visual state kept between frames.
 pub struct UiState {
     pub address: String,
     pub nickname: String,
-    pub log: VecDeque<(LogKind, String)>,
+    pub log: EventLog,
+    pub tab: Tab,
+    /// Show notices (pauses, joins, …) in the chat panel.
+    pub show_events: bool,
+    pub library_query: String,
     pub last_error: Option<String>,
     pub url: String,
     pub library_requested: bool,
@@ -41,6 +45,8 @@ pub struct SppyApp {
     /// Runs the client core and the embedded server; must outlive the window.
     pub rt: Runtime,
     pub handle: ClientHandle,
+    /// Shared with the client core: changing it affects the next player launch.
+    pub launcher: MpvLauncher,
     pub config: ClientConfig,
     pub paths: ClientPaths,
     pub ui: UiState,
@@ -55,6 +61,7 @@ impl SppyApp {
         cc: &eframe::CreationContext<'_>,
         rt: Runtime,
         handle: ClientHandle,
+        launcher: MpvLauncher,
         config: ClientConfig,
         paths: ClientPaths,
     ) -> Self {
@@ -74,7 +81,10 @@ impl SppyApp {
         let ui = UiState {
             address: config.servers.last().map(|s| s.address.clone()).unwrap_or_default(),
             nickname: config.nickname.clone(),
-            log: VecDeque::new(),
+            log: EventLog::new(LOG_LINES),
+            tab: Tab::Playlist,
+            show_events: true,
+            library_query: String::new(),
             last_error: None,
             url: String::new(),
             library_requested: false,
@@ -87,7 +97,7 @@ impl SppyApp {
             player_problem: None,
         };
         let events = handle.subscribe_events();
-        SppyApp { rt, handle, config, paths, ui, events, host: None, host_starting: None }
+        SppyApp { rt, handle, launcher, config, paths, ui, events, host: None, host_starting: None }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -102,10 +112,18 @@ impl SppyApp {
         if kind == LogKind::Error {
             self.ui.last_error = Some(text.clone());
         }
-        self.ui.log.push_back((kind, text));
-        while self.ui.log.len() > LOG_LINES {
-            self.ui.log.pop_front();
-        }
+        self.ui.log.push(kind, text);
+    }
+
+    /// Apply the player settings and restart the player with them.
+    pub fn restart_player(&mut self) {
+        self.launcher.set_config(MpvConfig {
+            path: self.config.player.path.clone(),
+            extra_args: self.config.player.extra_args.clone(),
+            headless: false,
+        });
+        self.ui.player_problem = None;
+        self.send(UiCommand::RestartPlayer);
     }
 
     /// Remember the nickname and server for next time.
@@ -209,32 +227,38 @@ impl eframe::App for SppyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let snap = self.snapshot();
+        let ctx = ui.ctx().clone();
         egui::Panel::top("connect").show(ui, |ui| ui::connect::show(self, ui, &snap));
         egui::Panel::bottom("status").show(ui, |ui| ui::status_line(self, ui, &snap));
-        let ctx = ui.ctx().clone();
         ui::settings::show(self, &ctx, &snap);
         ui::participants::kick_dialog(self, &ctx);
+        if snap.room.is_none() {
+            self.ui.library_requested = false;
+            egui::CentralPanel::default().show(ui, |ui| ui::banners(self, ui, &snap));
+            return;
+        }
+        egui::Panel::left("people").resizable(true).default_size(300.0).show(ui, |ui| {
+            ui.heading("Participants");
+            ui::participants::show(self, ui, &snap);
+            if snap.is_host {
+                ui.add_space(4.0);
+                ui::host::show(self, ui, &snap);
+            }
+            ui.separator();
+            ui::chat::show(self, ui, &snap);
+        });
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if snap.room.is_none() {
-                    self.ui.library_requested = false;
-                    return;
+            ui::banners(self, ui, &snap);
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.ui.tab, Tab::Playlist, "Playlist");
+                ui.selectable_value(&mut self.ui.tab, Tab::Library, "Library");
+            });
+            ui.separator();
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                match self.ui.tab {
+                    Tab::Playlist => ui::playlist::show(self, ui, &snap),
+                    Tab::Library => ui::library::show(self, ui, &snap),
                 }
-                egui::CollapsingHeader::new("Participants")
-                    .default_open(true)
-                    .show(ui, |ui| ui::participants::show(self, ui, &snap));
-                egui::CollapsingHeader::new("Playlist")
-                    .default_open(true)
-                    .show(ui, |ui| ui::playlist::show(self, ui, &snap));
-                egui::CollapsingHeader::new("Library")
-                    .show(ui, |ui| ui::library::show(self, ui, &snap));
-                if snap.is_host {
-                    egui::CollapsingHeader::new("Host")
-                        .show(ui, |ui| ui::host::show(self, ui, &snap));
-                }
-                egui::CollapsingHeader::new("Chat")
-                    .default_open(true)
-                    .show(ui, |ui| ui::chat::show(self, ui, &snap));
             });
         });
     }
