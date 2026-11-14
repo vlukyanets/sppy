@@ -25,6 +25,58 @@ fn title(room: &RoomState, id: ItemId) -> String {
         .unwrap_or_else(|| "item".into())
 }
 
+/// Whether a notice deserves the player's OSD: what others did to playback, item changes and
+/// waits. Joins, playlist edits and settings only go to the app's event log.
+pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
+    match action {
+        NoticeAction::Paused
+        | NoticeAction::Resumed
+        | NoticeAction::Seeked { .. }
+        | NoticeAction::SpeedChanged { .. } => !actor_is_me,
+        NoticeAction::ItemChanged { .. }
+        | NoticeAction::HoldStarted { .. }
+        | NoticeAction::HoldEnded
+        | NoticeAction::ItemSkipped { .. }
+        | NoticeAction::Kicked { .. } => true,
+        NoticeAction::PlaylistAdded { .. }
+        | NoticeAction::PlaylistRemoved { .. }
+        | NoticeAction::PlaylistMoved { .. }
+        | NoticeAction::Joined
+        | NoticeAction::Left
+        | NoticeAction::ControlModeChanged { .. }
+        | NoticeAction::CanControlChanged { .. }
+        | NoticeAction::DeliveryFellBack { .. } => false,
+    }
+}
+
+/// "Waiting for: you (downloading 45%), yaroslav (buffering), ann (loading)".
+pub fn waiting_line(
+    hold: &sppy_proto::Hold,
+    room: &RoomState,
+    progress: &std::collections::HashMap<ParticipantId, sppy_proto::ProgressEntry>,
+    me: Option<ParticipantId>,
+) -> String {
+    use sppy_proto::{Delivery, MediaStatus};
+    let parts: Vec<String> = hold
+        .waiting_for
+        .iter()
+        .map(|pid| {
+            let name = if Some(*pid) == me { "you".to_owned() } else { nickname(room, *pid) };
+            let status = room.participants.iter().find(|p| p.id == *pid).map(|p| &p.status);
+            let detail = match (status, progress.get(pid).map(|e| &e.delivery)) {
+                (_, Some(Delivery::Download { bytes, total })) if *total > 0 && bytes < total => {
+                    format!("downloading {}%", bytes * 100 / total)
+                }
+                (Some(MediaStatus::Stalled), _) => "buffering".into(),
+                (Some(MediaStatus::Loading), _) => "loading".into(),
+                _ => String::new(),
+            };
+            if detail.is_empty() { name } else { format!("{name} ({detail})") }
+        })
+        .collect();
+    format!("Waiting for: {}", parts.join(", "))
+}
+
 pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomState) -> String {
     let who = actor.unwrap_or("Someone");
     match action {
@@ -151,5 +203,82 @@ mod tests {
         assert_eq!(fmt_time(0), "0:00");
         assert_eq!(fmt_time(65_000), "1:05");
         assert_eq!(fmt_time(3_600_000), "1:00:00");
+    }
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use std::collections::HashMap;
+
+    use sppy_proto::*;
+
+    use super::*;
+
+    #[test]
+    fn osd_shows_only_what_matters() {
+        let other = |a: NoticeAction| osd_worthy(&a, false);
+        assert!(other(NoticeAction::Paused));
+        assert!(other(NoticeAction::Resumed));
+        assert!(other(NoticeAction::Seeked { to_ms: 1 }));
+        assert!(other(NoticeAction::SpeedChanged { speed: 1.5 }));
+        assert!(other(NoticeAction::ItemChanged { item_id: ItemId(1) }));
+        assert!(other(NoticeAction::HoldStarted {
+            hold: Hold { reason: HoldReason::Stalled, waiting_for: vec![] }
+        }));
+        assert!(other(NoticeAction::HoldEnded));
+        assert!(!other(NoticeAction::Joined));
+        assert!(!other(NoticeAction::Left));
+        assert!(!other(NoticeAction::PlaylistAdded { item_ids: vec![] }));
+        assert!(!other(NoticeAction::PlaylistMoved { item_id: ItemId(1) }));
+        assert!(!other(NoticeAction::ControlModeChanged { mode: ControlMode::Everyone }));
+        // My own actions are already visible in my player.
+        assert!(!osd_worthy(&NoticeAction::Paused, true));
+        assert!(!osd_worthy(&NoticeAction::Seeked { to_ms: 1 }, true));
+        // ...except the room changing item (the player is about to reload).
+        assert!(osd_worthy(&NoticeAction::ItemChanged { item_id: ItemId(1) }, true));
+    }
+
+    fn room() -> RoomState {
+        let p = |id, nick: &str, status| Participant {
+            id: ParticipantId(id),
+            nickname: nick.into(),
+            is_host: false,
+            can_control: false,
+            connected: true,
+            status,
+        };
+        RoomState {
+            room_id: RoomId::main(),
+            participants: vec![
+                p(1, "me", MediaStatus::Loading),
+                p(2, "yaroslav", MediaStatus::Stalled),
+                p(3, "ann", MediaStatus::Loading),
+            ],
+            control_mode: ControlMode::Everyone,
+            playlist: vec![],
+            settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
+        }
+    }
+
+    #[test]
+    fn waiting_line_explains_each_participant() {
+        let hold = Hold {
+            reason: HoldReason::ItemStart,
+            waiting_for: vec![ParticipantId(1), ParticipantId(2), ParticipantId(3)],
+        };
+        let mut progress = HashMap::new();
+        progress.insert(
+            ParticipantId(1),
+            ProgressEntry {
+                participant_id: ParticipantId(1),
+                item_id: ItemId(1),
+                delivery: Delivery::Download { bytes: 45, total: 100 },
+                drift_ms: None,
+            },
+        );
+        assert_eq!(
+            waiting_line(&hold, &room(), &progress, Some(ParticipantId(1))),
+            "Waiting for: you (downloading 45%), yaroslav (buffering), ann (loading)"
+        );
     }
 }

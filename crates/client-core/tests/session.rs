@@ -245,12 +245,95 @@ async fn pressing_play_while_the_room_waits_explains_why() {
         p.remote()
             .commands()
             .iter()
-            .filter(|c| matches!(c, FakeCmd::Osd(t) if t == "Waiting for bob"))
+            .filter(|c| matches!(c, FakeCmd::Osd(t) if t.starts_with("Waiting for")))
             .count()
     };
     let before = waiting(&a);
     a.remote().user_pause(false);
     eventually("explained in the player", 3, || waiting(&a) > before).await;
     eventually("a paused again", 3, || a.remote().paused()).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn drift_of_each_participant_is_visible_to_everyone() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 8, || a.synced() && b.synced()).await;
+    let bob = snap(&b.handle).me.unwrap();
+    eventually("a sees bob's drift", 5, || {
+        snap(&a.handle).progress.get(&bob).and_then(|e| e.drift_ms).is_some_and(|d| d.abs() < 200)
+    })
+    .await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn own_actions_are_not_repeated_on_the_osd() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 8, || a.synced() && b.synced()).await;
+    a.remote().user_pause(true);
+    let osd = |p: &Peer, text: &str| {
+        p.remote().commands().iter().any(|c| matches!(c, FakeCmd::Osd(t) if t == text))
+    };
+    eventually("bob is told", 3, || osd(&b, "host paused")).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!osd(&a, "host paused"), "the host saw their own pause");
+    assert!(!osd(&b, "host joined") && !osd(&b, "bob joined"), "joins stay out of the OSD");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn restart_player_relaunches_and_resyncs() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("in sync", 8, || a.synced()).await;
+    a.send(UiCommand::RestartPlayer);
+    eventually("relaunched", 3, || a.launcher.launches() == 2).await;
+    eventually("in sync again", 8, || a.synced()).await;
+    assert!(snap(&a.handle).player_open);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn missing_player_is_reported_clearly() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let launcher = sppy_player::fake::FakeLauncher::new(FakeConfig::default());
+    launcher.set_not_installed(true);
+    let handle = sppy_client_core::api::spawn_client(
+        sppy_client_core::config::ClientConfig { nickname: "host".into(), ..Default::default() },
+        launcher,
+    );
+    let mut events = handle.subscribe_events();
+    handle
+        .commands
+        .send(UiCommand::BecomeHostConnect {
+            listen: server.local_addr,
+            host_token: server.host_token.clone(),
+        })
+        .unwrap();
+    let ev = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(e @ sppy_client_core::api::UiEvent::PlayerUnavailable(_)) =
+                events.recv().await
+            {
+                return e;
+            }
+        }
+    })
+    .await
+    .expect("PlayerUnavailable event");
+    let sppy_client_core::api::UiEvent::PlayerUnavailable(text) = ev else { unreachable!() };
+    assert!(text.contains("not found"), "{text}");
     server.shutdown().await;
 }

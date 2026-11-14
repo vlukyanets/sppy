@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("tokio runtime")?;
-    let launcher = MpvLauncher(MpvConfig {
+    let launcher = MpvLauncher::new(MpvConfig {
         path: config.player.path.clone(),
         extra_args: config.player.extra_args.clone(),
         headless: false,

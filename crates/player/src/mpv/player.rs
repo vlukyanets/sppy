@@ -66,15 +66,29 @@ impl MpvConfig {
     }
 }
 
-/// Launches mpv processes.
+/// Launches mpv processes. Clones share the configuration, so the app can change the mpv path
+/// or arguments for the next launch (see [`MpvLauncher::set_config`]).
 #[derive(Debug, Clone, Default)]
-pub struct MpvLauncher(pub MpvConfig);
+pub struct MpvLauncher {
+    cfg: Arc<Mutex<MpvConfig>>,
+}
+
+impl MpvLauncher {
+    pub fn new(cfg: MpvConfig) -> Self {
+        MpvLauncher { cfg: Arc::new(Mutex::new(cfg)) }
+    }
+
+    pub fn set_config(&self, cfg: MpvConfig) {
+        *self.cfg.lock().expect("mpv config") = cfg;
+    }
+}
 
 impl PlayerLauncher for MpvLauncher {
     type P = MpvPlayer;
 
     async fn launch(&self) -> PlayerResult<MpvPlayer> {
-        MpvPlayer::launch(&self.0).await
+        let cfg = self.cfg.lock().expect("mpv config").clone();
+        MpvPlayer::launch(&cfg).await
     }
 }
 
@@ -143,7 +157,13 @@ impl MpvPlayer {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| PlayerError::Launch(format!("{}: {e}", cfg.path.display())))?;
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    PlayerError::NotInstalled(cfg.path.display().to_string())
+                } else {
+                    PlayerError::Launch(format!("{}: {e}", cfg.path.display()))
+                }
+            })?;
         let (ipc, raw_events) = match MpvIpc::connect(&ipc_path, CONNECT_TIMEOUT).await {
             Ok(x) => x,
             Err(e) => {

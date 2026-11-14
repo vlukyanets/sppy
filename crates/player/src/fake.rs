@@ -333,15 +333,21 @@ impl FakeRemote {
 pub struct FakeLauncher {
     pub cfg: FakeConfig,
     remotes: Arc<Mutex<Vec<FakeRemote>>>,
+    not_installed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeLauncher {
     pub fn new(cfg: FakeConfig) -> Self {
-        FakeLauncher { cfg, remotes: Arc::default() }
+        FakeLauncher { cfg, remotes: Arc::default(), not_installed: Arc::default() }
     }
 
     pub fn launches(&self) -> usize {
         self.remotes.lock().expect("remotes").len()
+    }
+
+    /// Make launches fail as if the player were not installed.
+    pub fn set_not_installed(&self, yes: bool) {
+        self.not_installed.store(yes, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Remote of the most recently launched player.
@@ -354,6 +360,9 @@ impl PlayerLauncher for FakeLauncher {
     type P = FakePlayer;
 
     async fn launch(&self) -> PlayerResult<FakePlayer> {
+        if self.not_installed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(PlayerError::NotInstalled("fake-player".into()));
+        }
         let (player, remote) = FakePlayer::new(self.cfg.clone());
         self.remotes.lock().expect("remotes").push(remote);
         Ok(player)

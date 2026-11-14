@@ -33,6 +33,8 @@ pub struct UiState {
     pub extra_args: String,
     pub subtitle_languages: String,
     pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
+    /// The player could not start (shown as a banner with a Settings button).
+    pub player_problem: Option<String>,
 }
 
 pub struct SppyApp {
@@ -82,6 +84,7 @@ impl SppyApp {
             extra_args: config.player.extra_args.join(" "),
             subtitle_languages: config.subtitle_languages.join(", "),
             confirm_kick: None,
+            player_problem: None,
         };
         let events = handle.subscribe_events();
         SppyApp { rt, handle, config, paths, ui, events, host: None, host_starting: None }
@@ -177,6 +180,10 @@ impl SppyApp {
                 }
                 Ok(UiEvent::Notice(t)) => self.push_log(LogKind::Notice, t),
                 Ok(UiEvent::Error(t)) => self.push_log(LogKind::Error, t),
+                Ok(UiEvent::PlayerUnavailable(t)) => {
+                    self.ui.player_problem = Some(t.clone());
+                    self.push_log(LogKind::Error, t);
+                }
                 Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(_) => break,
             }

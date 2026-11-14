@@ -45,6 +45,10 @@ pub enum UiCommand {
     RotateInvite,
     RescanLibrary,
     OpenPlayer,
+    /// Close the player and start it again (e.g. after changing its path or arguments).
+    RestartPlayer,
+    /// Host: end the current wait even though some participants are not ready.
+    StartWithoutWaiting,
     SetMode(DeliveryMode),
     ChooseLocalFile {
         item_id: ItemId,
@@ -110,6 +114,8 @@ pub enum UiEvent {
     Chat(ChatMessage),
     Notice(String),
     Error(String),
+    /// The player could not be started (e.g. mpv not installed): show it prominently.
+    PlayerUnavailable(String),
 }
 
 pub struct ClientHandle {

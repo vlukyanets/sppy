@@ -52,7 +52,7 @@ async fn two_real_mpv_clients_stay_in_sync() {
     let server = start_server(&dir.path().join("server"), cfg).await;
     let file_id = sppy_server::library::file_id("Clips", Path::new("clip.mkv"));
     let _ = &clip;
-    let launcher = MpvLauncher(MpvConfig { headless: true, ..MpvConfig::default() });
+    let launcher = MpvLauncher::new(MpvConfig { headless: true, ..MpvConfig::default() });
     let cfg = |nick: &str| ClientConfig { nickname: nick.into(), ..ClientConfig::default() };
     let a = spawn_client(cfg("a"), launcher.clone());
     let b = spawn_client(cfg("b"), launcher);

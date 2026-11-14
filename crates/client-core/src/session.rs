@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use sppy_player::{MediaSource, Player, PlayerEvent, PlayerLauncher};
+use sppy_player::{MediaSource, Player, PlayerError, PlayerEvent, PlayerLauncher};
 use sppy_proto::{
     ClientMsg, CloseReason, Delivery, ErrorCode, Event, FileId, Item, ItemId, MediaStatus,
     PlaybackState, ReqId, ServerMsg, Source,
@@ -33,6 +33,8 @@ const FOREIGN_JUMP_GRACE_MS: u64 = 1500;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
 const OSD_MS: u64 = 3000;
 const CHAT_HISTORY: usize = 50;
+/// The drift goes to the server at most this often (spec §5.3: progress ≤ 1 Hz).
+const DRIFT_REPORT_MS: u64 = 1000;
 pub(crate) const NO_PERMISSION: &str = "No permission to control playback";
 
 /// What the player currently has and reports.
@@ -50,6 +52,9 @@ struct MediaState {
     local: bool,
     /// Waiting for a preload download of this item.
     downloading: bool,
+    /// How the loaded item arrives (re-sent with the drift once per second).
+    delivery: Option<Delivery>,
+    last_drift_report_ms: u64,
     /// Session token baked into the loaded media URLs (server streams only).
     token: Option<String>,
     /// A position jump we did not cause: probably the user seeking; hold corrections until then.
@@ -73,6 +78,8 @@ impl Default for MediaState {
             cache_eof: false,
             local: false,
             downloading: false,
+            delivery: None,
+            last_drift_report_ms: 0,
             token: None,
             foreign_jump_until: 0,
             duration_ms: None,
@@ -315,6 +322,16 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::RescanLibrary => {
                 self.request(|req_id| ClientMsg::RescanLibrary { req_id });
             }
+            UiCommand::RestartPlayer => {
+                // Dropping the player kills it; a new one starts with the current launcher config.
+                self.player = None;
+                self.player_closed_by_user = false;
+                self.last_crash = None;
+                self.ensure_player().await;
+            }
+            UiCommand::StartWithoutWaiting => {
+                self.request(|req_id| ClientMsg::StartWithoutWaiting { req_id });
+            }
             UiCommand::OpenPlayer => {
                 self.player_closed_by_user = false;
                 self.ensure_player().await;
@@ -444,15 +461,22 @@ impl<L: PlayerLauncher> Session<L> {
                 if self.snap.chat_history.len() > CHAT_HISTORY {
                     self.snap.chat_history.remove(0);
                 }
+                let from_me = Some(c.from) == self.snap.me;
                 self.emit(UiEvent::Chat(c));
-                self.osd(&line).await;
+                if !from_me {
+                    self.osd(&line).await;
+                }
             }
             ServerMsg::Event(Event::Notice { actor, action }) => {
                 let Some(room) = &self.snap.room else { return };
+                let actor_id = actor;
                 let actor = actor.map(|a| nickname(room, a));
                 let text = render_notice(actor.as_deref(), &action, room);
+                let mine = actor_id.is_some() && actor_id == self.snap.me;
                 self.emit(UiEvent::Notice(text.clone()));
-                self.osd(&text).await;
+                if crate::notice::osd_worthy(&action, mine) {
+                    self.osd(&text).await;
+                }
             }
             ServerMsg::Denied { req_id, code } => {
                 if self.awaiting.is_some_and(|(r, _)| r == req_id) {
@@ -488,8 +512,7 @@ impl<L: PlayerLauncher> Session<L> {
     fn waiting_text(&self) -> Option<String> {
         let hold = self.snap.playback.as_ref()?.hold.as_ref()?;
         let room = self.snap.room.as_ref()?;
-        let names: Vec<String> = hold.waiting_for.iter().map(|p| nickname(room, *p)).collect();
-        Some(format!("Waiting for {}", names.join(", ")))
+        Some(crate::notice::waiting_line(hold, room, &self.snap.progress, self.snap.me))
     }
 
     fn current_item_id(&self) -> Option<ItemId> {
@@ -785,6 +808,7 @@ impl<L: PlayerLauncher> Session<L> {
         }
         self.send_status();
         let local = delivery == Delivery::Local;
+        self.media.delivery = Some(delivery.clone());
         self.send(ClientMsg::Progress { item_id: id, delivery, drift_ms: None });
         if local {
             self.maybe_prefetch();
@@ -807,12 +831,13 @@ impl<L: PlayerLauncher> Session<L> {
                         delivery: Delivery::Download { bytes, total },
                         drift_ms: None,
                     });
-                    if let Some(percent) = (bytes * 100).checked_div(total) {
-                        self.osd(&format!("Downloading {percent}%")).await;
-                    }
+                    let _ = (bytes, total);
                 }
             }
             DownloadEvent::Done { file_id } => {
+                if self.downloading_item(&file_id).is_some() {
+                    self.osd("Download complete").await;
+                }
                 if let Err(e) = self.cache.evict(&self.protected_files()) {
                     tracing::warn!("cache eviction failed: {e}");
                 }
@@ -906,9 +931,15 @@ impl<L: PlayerLauncher> Session<L> {
                 self.controller = DriftController::new(self.config.advanced.clone());
                 self.apply_playback().await;
             }
+            Err(PlayerError::NotInstalled(path)) => {
+                self.snap.player_open = false;
+                self.emit(UiEvent::PlayerUnavailable(format!(
+                    "mpv not found ({path}): install mpv or set its path in Settings"
+                )));
+            }
             Err(e) => {
                 self.snap.player_open = false;
-                self.emit(UiEvent::Error(format!("Cannot start the player: {e}")));
+                self.emit(UiEvent::PlayerUnavailable(format!("Cannot start the player: {e}")));
             }
         }
     }
@@ -1098,6 +1129,14 @@ impl<L: PlayerLauncher> Session<L> {
             paused: self.media.paused,
             speed: self.media.speed,
         };
+        if target.playing
+            && now.saturating_sub(self.media.last_drift_report_ms) >= DRIFT_REPORT_MS
+            && let (Some(item_id), Some(delivery)) = (self.media.item, self.media.delivery.clone())
+        {
+            self.media.last_drift_report_ms = now;
+            let drift_ms = Some(observed.position_ms as i64 - target.position_ms as i64);
+            self.send(ClientMsg::Progress { item_id, delivery, drift_ms });
+        }
         for c in self.controller.update(now, &target, &observed) {
             self.apply_correction(now, c, &pb).await;
         }

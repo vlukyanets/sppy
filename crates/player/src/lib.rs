@@ -55,6 +55,9 @@ pub enum PlayerEvent {
 pub enum PlayerError {
     #[error("cannot launch player: {0}")]
     Launch(String),
+    /// The player program does not exist (not installed or wrong path).
+    #[error("player not found: {0}")]
+    NotInstalled(String),
     #[error("player IPC error: {0}")]
     Ipc(String),
     #[error("player is gone")]

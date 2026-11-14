@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
         .next()
         .map(|e| sppy_server::library::file_id("Media", std::path::Path::new(&e.file_name())))
         .ok_or_else(|| anyhow::anyhow!("no media file"))?;
-    let launcher = MpvLauncher(MpvConfig::default());
+    let launcher = MpvLauncher::new(MpvConfig::default());
     let cfg = |nick: &str| ClientConfig { nickname: nick.into(), ..ClientConfig::default() };
     let a = spawn_client(cfg("alice"), launcher.clone());
     let b = spawn_client(cfg("bob"), launcher);

@@ -15,7 +15,7 @@ async fn launch() -> Option<MpvPlayer> {
         return None;
     }
     let cfg = MpvConfig { headless: true, ..MpvConfig::default() };
-    Some(MpvLauncher(cfg).launch().await.expect("launch mpv"))
+    Some(MpvLauncher::new(cfg).launch().await.expect("launch mpv"))
 }
 
 async fn wait_for(
