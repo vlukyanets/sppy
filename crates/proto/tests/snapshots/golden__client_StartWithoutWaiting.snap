@@ -1,0 +1,8 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "StartWithoutWaiting",
+  "req_id": 14
+}

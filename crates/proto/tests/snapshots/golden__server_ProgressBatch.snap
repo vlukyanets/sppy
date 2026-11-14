@@ -10,7 +10,8 @@ expression: msg
       "item_id": 3,
       "delivery": {
         "kind": "Stream"
-      }
+      },
+      "drift_ms": -12
     }
   ]
 }

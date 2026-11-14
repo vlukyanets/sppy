@@ -157,7 +157,12 @@ impl Room {
             ClientMsg::SetStatus { item_id, status } => {
                 self.set_status(now_ms, pid, item_id, status)
             }
-            ClientMsg::Progress { item_id, delivery } => self.progress(pid, item_id, delivery),
+            ClientMsg::Progress { item_id, delivery, drift_ms } => {
+                self.progress(pid, item_id, delivery, drift_ms)
+            }
+            ClientMsg::StartWithoutWaiting { req_id } => {
+                self.start_without_waiting(now_ms, pid, req_id)
+            }
             ClientMsg::ItemEnded { item_id } => self.item_ended(now_ms, item_id),
             ClientMsg::Chat { text } => self.chat(now_ms, pid, text),
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),

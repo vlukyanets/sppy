@@ -13,7 +13,7 @@ pub use notice::*;
 pub use state::*;
 
 /// Wire protocol version. A mismatch is rejected during the handshake.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Default TCP port of an sppy server.
 pub const DEFAULT_PORT: u16 = 8740;

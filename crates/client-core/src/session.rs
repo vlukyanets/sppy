@@ -763,6 +763,7 @@ impl<L: PlayerLauncher> Session<L> {
                 self.send(ClientMsg::Progress {
                     item_id: id,
                     delivery: Delivery::Download { bytes: 0, total },
+                    drift_ms: None,
                 });
                 self.osd("Downloading…").await;
                 return;
@@ -784,7 +785,7 @@ impl<L: PlayerLauncher> Session<L> {
         }
         self.send_status();
         let local = delivery == Delivery::Local;
-        self.send(ClientMsg::Progress { item_id: id, delivery });
+        self.send(ClientMsg::Progress { item_id: id, delivery, drift_ms: None });
         if local {
             self.maybe_prefetch();
         }
@@ -804,6 +805,7 @@ impl<L: PlayerLauncher> Session<L> {
                     self.send(ClientMsg::Progress {
                         item_id: item.item_id,
                         delivery: Delivery::Download { bytes, total },
+                        drift_ms: None,
                     });
                     if let Some(percent) = (bytes * 100).checked_div(total) {
                         self.osd(&format!("Downloading {percent}%")).await;

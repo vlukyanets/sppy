@@ -105,6 +105,7 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
             ClientMsg::Progress {
                 item_id: ItemId(3),
                 delivery: Delivery::Download { bytes: 10, total: 100 },
+                drift_ms: None,
             },
         ),
         ("ItemEnded", ClientMsg::ItemEnded { item_id: ItemId(3) }),
@@ -122,6 +123,7 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
         ("Kick", ClientMsg::Kick { req_id: 11, participant_id: ParticipantId(2) }),
         ("RotateInvite", ClientMsg::RotateInvite { req_id: 12 }),
         ("RescanLibrary", ClientMsg::RescanLibrary { req_id: 13 }),
+        ("StartWithoutWaiting", ClientMsg::StartWithoutWaiting { req_id: 14 }),
     ]
 }
 
@@ -156,6 +158,7 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
                     participant_id: ParticipantId(2),
                     item_id: ItemId(3),
                     delivery: Delivery::Stream,
+                    drift_ms: Some(-12),
                 }],
             },
         ),

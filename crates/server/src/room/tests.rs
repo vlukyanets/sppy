@@ -918,13 +918,18 @@ mod status {
     #[test]
     fn progress_batched_once_per_second() {
         let (mut r, h, g) = playing_room();
-        r.command(100, h, ClientMsg::Progress { item_id: ItemId(1), delivery: Delivery::Stream });
+        r.command(
+            100,
+            h,
+            ClientMsg::Progress { item_id: ItemId(1), delivery: Delivery::Stream, drift_ms: None },
+        );
         r.command(
             200,
             g,
             ClientMsg::Progress {
                 item_id: ItemId(1),
                 delivery: Delivery::Download { bytes: 1, total: 10 },
+                drift_ms: None,
             },
         );
         let batch = |effects: &[Effect]| {
@@ -943,6 +948,7 @@ mod status {
             ClientMsg::Progress {
                 item_id: ItemId(1),
                 delivery: Delivery::Download { bytes: 5, total: 10 },
+                drift_ms: None,
             },
         );
         assert!(batch(&r.tick(1500)).is_none(), "not within 1 s");
@@ -959,10 +965,14 @@ mod status {
             ClientMsg::Progress {
                 item_id: ItemId(1),
                 delivery: Delivery::Download { bytes: 1, total: 10 },
+                drift_ms: None,
             },
         );
-        let effects =
-            r.command(0, g, ClientMsg::Progress { item_id: ItemId(1), delivery: Delivery::Stream });
+        let effects = r.command(
+            0,
+            g,
+            ClientMsg::Progress { item_id: ItemId(1), delivery: Delivery::Stream, drift_ms: None },
+        );
         assert!(
             has_notice(&effects, |a| *a == NoticeAction::DeliveryFellBack { participant_id: g })
         );
@@ -1149,4 +1159,63 @@ fn playback_seq_strictly_increases_within_one_request() {
         .collect();
     assert!(!seqs.is_empty());
     assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+}
+
+mod v2 {
+    use super::*;
+
+    fn waiting_room() -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        status(&mut r, 0, h, 1, ready());
+        assert!(r.playback().hold.is_some(), "waiting for the guest");
+        (r, h, g)
+    }
+
+    #[test]
+    fn host_can_start_without_waiting() {
+        let (mut r, h, _) = waiting_room();
+        let effects = r.command(5_000, h, ClientMsg::StartWithoutWaiting { req_id: 2 });
+        let p = r.playback();
+        assert!(p.hold.is_none());
+        assert!(p.is_playing());
+        assert_eq!(p.at_server_ms, 5_000);
+        assert!(has_notice(&effects, |a| *a == NoticeAction::HoldEnded));
+    }
+
+    #[test]
+    fn guest_cannot_start_without_waiting() {
+        let (mut r, _, g) = waiting_room();
+        let effects = r.command(0, g, ClientMsg::StartWithoutWaiting { req_id: 3 });
+        assert_denied(&effects, g, 3, ErrorCode::NotHost);
+        assert!(r.playback().hold.is_some());
+    }
+
+    #[test]
+    fn progress_carries_drift() {
+        let (mut r, h, _) = waiting_room();
+        r.command(
+            0,
+            h,
+            ClientMsg::Progress {
+                item_id: ItemId(1),
+                delivery: Delivery::Local,
+                drift_ms: Some(-42),
+            },
+        );
+        let effects = r.tick(2_000);
+        let entries = effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Broadcast { msg: ServerMsg::ProgressBatch { entries } } => {
+                    Some(entries.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(entries[0].drift_ms, Some(-42));
+    }
 }

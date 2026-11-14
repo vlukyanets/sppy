@@ -62,7 +62,7 @@ async fn version_mismatch_rejected() {
     .await;
     assert!(matches!(
         c.recv().await,
-        ServerMsg::Reject { code: ErrorCode::VersionMismatch { server_protocol: 1 }, .. }
+        ServerMsg::Reject { code: ErrorCode::VersionMismatch { server_protocol: PROTOCOL_VERSION }, .. }
     ));
     server.shutdown().await;
 }

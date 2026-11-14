@@ -74,9 +74,13 @@ pub enum ClientMsg {
         item_id: ItemId,
         status: MediaStatus,
     },
+    /// At most once per second: how the item arrives and, while playing, the drift.
     Progress {
         item_id: ItemId,
         delivery: Delivery,
+        /// Player position minus the room position, in ms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        drift_ms: Option<i64>,
     },
     ItemEnded {
         item_id: ItemId,
@@ -104,6 +108,10 @@ pub enum ClientMsg {
     RescanLibrary {
         req_id: ReqId,
     },
+    /// Host: end the current wait even though some participants are not ready.
+    StartWithoutWaiting {
+        req_id: ReqId,
+    },
 }
 
 impl ClientMsg {
@@ -123,7 +131,8 @@ impl ClientMsg {
             | SetCanControl { req_id, .. }
             | Kick { req_id, .. }
             | RotateInvite { req_id }
-            | RescanLibrary { req_id } => Some(*req_id),
+            | RescanLibrary { req_id }
+            | StartWithoutWaiting { req_id } => Some(*req_id),
             Hello { .. }
             | Ping { .. }
             | Bye

@@ -140,6 +140,9 @@ pub struct ProgressEntry {
     pub participant_id: ParticipantId,
     pub item_id: ItemId,
     pub delivery: Delivery,
+    /// The participant's last reported drift from the room position, in ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

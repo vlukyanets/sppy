@@ -1,8 +1,8 @@
 //! Participant statuses, holds, end of item, delivery progress and chat (spec §4.5, §6.4).
 
 use sppy_proto::{
-    ChatMessage, Delivery, Event, Hold, HoldReason, ItemId, MediaStatus, NoticeAction,
-    ParticipantId, ProgressEntry, ServerMsg, SkipReason, Source,
+    ChatMessage, Delivery, ErrorCode, Event, Hold, HoldReason, ItemId, MediaStatus, NoticeAction,
+    ParticipantId, ProgressEntry, ReqId, ServerMsg, SkipReason, Source,
 };
 
 use super::{Effect, Room};
@@ -85,6 +85,25 @@ impl Room {
         vec![self.broadcast_playback(), Self::notice(None, NoticeAction::HoldEnded)]
     }
 
+    /// Host override: end the current hold even though someone is not ready.
+    pub(super) fn start_without_waiting(
+        &mut self,
+        now_ms: u64,
+        pid: ParticipantId,
+        req_id: ReqId,
+    ) -> Vec<Effect> {
+        if !self.is_host(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotHost);
+        }
+        if self.playback.hold.take().is_none() {
+            return Vec::new();
+        }
+        self.playback.at_server_ms = now_ms;
+        self.playback.seq += 1;
+        self.playback.cause = Some(sppy_proto::Cause { participant_id: pid, req_id });
+        vec![self.broadcast_playback(), Self::notice(Some(pid), NoticeAction::HoldEnded)]
+    }
+
     /// Start a `Stalled` hold for participants stalled for at least `stall_hold_secs`.
     pub(super) fn check_stalls(&mut self, now_ms: u64) -> Vec<Effect> {
         let limit_ms = u64::from(self.config.settings.stall_hold_secs) * 1000;
@@ -148,6 +167,7 @@ impl Room {
         pid: ParticipantId,
         item_id: ItemId,
         delivery: Delivery,
+        drift_ms: Option<i64>,
     ) -> Vec<Effect> {
         if self.playback.item_id != Some(item_id) || self.member(pid).is_none() {
             return Vec::new();
@@ -156,7 +176,8 @@ impl Room {
             self.progress.get(&pid),
             Some(ProgressEntry { delivery: Delivery::Download { .. }, item_id: prev, .. }) if prev == &item_id
         ) && delivery == Delivery::Stream;
-        self.progress.insert(pid, ProgressEntry { participant_id: pid, item_id, delivery });
+        self.progress
+            .insert(pid, ProgressEntry { participant_id: pid, item_id, delivery, drift_ms });
         self.progress_dirty = true;
         if fell_back {
             vec![Self::notice(Some(pid), NoticeAction::DeliveryFellBack { participant_id: pid })]
