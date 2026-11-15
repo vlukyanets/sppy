@@ -28,6 +28,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # The cache key ignores the image version; C objects built on a newer
+          # glibc must not reach an older image.
+          key: ${{ matrix.os }}
       - name: Build
         run: cargo build --release --locked -p sppy-app -p sppy-server-cli
       - name: Package (Linux)

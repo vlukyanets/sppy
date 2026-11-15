@@ -22,6 +22,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # The cache key ignores the image version; C objects built on a newer
+          # glibc must not reach an older image.
+          key: ${{ matrix.os }}
       - name: Install mpv
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mpv
