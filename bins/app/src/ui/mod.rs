@@ -18,17 +18,27 @@ pub const GREEN: Color32 = Color32::from_rgb(90, 190, 110);
 pub const YELLOW: Color32 = Color32::from_rgb(230, 180, 60);
 pub const RED: Color32 = Color32::from_rgb(225, 85, 80);
 
-/// Last error (red, dismissable) or last notice, one line.
+/// "sppy 0.2.0 · protocol v3": both sides of a room need the same protocol.
+pub fn version_text() -> String {
+    format!("sppy {} · protocol v{}", env!("CARGO_PKG_VERSION"), sppy_proto::PROTOCOL_VERSION)
+}
+
+/// Last error (red, dismissable) or last notice on the left, the version on the right.
 pub fn status_line(app: &mut SppyApp, ui: &mut egui::Ui, _snap: &Snapshot) {
     ui.horizontal(|ui| {
-        if let Some(err) = &app.ui.last_error {
-            ui.colored_label(ui.visuals().error_fg_color, err);
-            if ui.small_button("✕").clicked() {
-                app.ui.last_error = None;
-            }
-        } else if let Some(e) = app.ui.log.last_notice() {
-            ui.weak(e.display());
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.weak(version_text());
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if let Some(err) = &app.ui.last_error {
+                    ui.colored_label(ui.visuals().error_fg_color, err);
+                    if ui.small_button("✕").clicked() {
+                        app.ui.last_error = None;
+                    }
+                } else if let Some(e) = app.ui.log.last_notice() {
+                    ui.weak(e.display());
+                }
+            });
+        });
     });
 }
 
@@ -68,5 +78,15 @@ pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 app.ui.settings_open = true;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn version_text_names_the_app_and_the_protocol() {
+        let t = super::version_text();
+        assert!(t.starts_with(&format!("sppy {}", env!("CARGO_PKG_VERSION"))), "{t}");
+        assert!(t.ends_with(&format!("protocol v{}", sppy_proto::PROTOCOL_VERSION)), "{t}");
     }
 }
