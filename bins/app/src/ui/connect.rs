@@ -14,6 +14,9 @@ pub fn state_text(c: &ConnState) -> String {
         ConnState::Reconnecting { attempt } => {
             format!("Server unavailable, reconnecting (attempt {attempt})")
         }
+        ConnState::Rejected(code @ sppy_proto::ErrorCode::VersionMismatch { .. }) => {
+            sppy_client_core::notice::reject_text(code, "")
+        }
         ConnState::Rejected(code) => format!("Rejected: {code:?}"),
     }
 }

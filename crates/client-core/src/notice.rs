@@ -128,6 +128,19 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
     }
 }
 
+/// Why the server refused us. A different protocol version gets its own explanation; the
+/// server's own words otherwise.
+pub fn reject_text(code: &sppy_proto::ErrorCode, server_message: &str) -> String {
+    match code {
+        sppy_proto::ErrorCode::VersionMismatch { server_protocol } => format!(
+            "This server runs a different version of sppy (protocol v{server_protocol}, this app \
+             v{}). Use the same sppy version on both sides.",
+            sppy_proto::PROTOCOL_VERSION
+        ),
+        _ => server_message.to_owned(),
+    }
+}
+
 /// What to tell the host when a folder change is refused.
 pub fn folder_problem_text(problem: sppy_proto::MediaFolderProblem) -> &'static str {
     use sppy_proto::MediaFolderProblem::*;

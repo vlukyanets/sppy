@@ -433,8 +433,8 @@ impl<L: PlayerLauncher> Session<L> {
                 self.snap.connection = ConnState::Reconnecting { attempt };
             }
             ConnEvent::Rejected { code, message } => {
+                self.emit(UiEvent::Error(crate::notice::reject_text(&code, &message)));
                 self.snap.connection = ConnState::Rejected(code);
-                self.emit(UiEvent::Error(message));
             }
         }
     }
