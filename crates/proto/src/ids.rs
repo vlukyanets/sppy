@@ -15,6 +15,14 @@ pub struct ItemId(pub u64);
 #[serde(transparent)]
 pub struct FileId(pub String);
 
+impl FileId {
+    /// 16 lowercase hex characters. Clients use the id in file names: anything else
+    /// (e.g. `../..` from a hostile server) must not be turned into a path.
+    pub fn is_well_formed(&self) -> bool {
+        self.0.len() == 16 && self.0.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }
+}
+
 /// Room id. Stage 1 always uses [`RoomId::main`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

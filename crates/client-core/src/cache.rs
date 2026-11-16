@@ -33,19 +33,21 @@ impl MediaCache {
         &self.dir
     }
 
-    pub fn path_for(&self, id: &FileId) -> PathBuf {
-        self.dir.join(&id.0)
+    /// Where the file goes; `None` for an id that is not a plain file name (the id comes
+    /// from the server and must never lead outside the cache).
+    pub fn path_for(&self, id: &FileId) -> Option<PathBuf> {
+        id.is_well_formed().then(|| self.dir.join(&id.0))
     }
 
     /// The cached file, if fully downloaded.
     pub fn complete(&self, id: &FileId) -> Option<PathBuf> {
-        let p = self.path_for(id);
+        let p = self.path_for(id)?;
         (p.is_file() && !part_path(&p).exists()).then_some(p)
     }
 
     /// Mark an entry as just used.
     pub fn touch(&self, id: &FileId) {
-        let p = self.path_for(id);
+        let Some(p) = self.path_for(id) else { return };
         if let Ok(f) = std::fs::File::options().write(true).open(&p)
             && let Err(e) = f.set_modified(SystemTime::now())
         {
@@ -162,25 +164,25 @@ mod tests {
     #[test]
     fn parts_count_toward_usage() {
         let dir = tempfile::tempdir().unwrap();
-        put(dir.path(), "a.part", 700, 300);
-        put(dir.path(), "b", 700, 100);
+        put(dir.path(), "aaaaaaaaaaaaaaaa.part", 700, 300);
+        put(dir.path(), "bbbbbbbbbbbbbbbb", 700, 100);
         let c = MediaCache::new(dir.path().into(), 1000);
         assert_eq!(c.used_bytes(), 1400);
         c.evict(&ids(&[])).unwrap();
-        assert!(!dir.path().join("a.part").exists());
-        assert!(c.complete(&FileId("b".into())).is_some());
+        assert!(!dir.path().join("aaaaaaaaaaaaaaaa.part").exists());
+        assert!(c.complete(&FileId("bbbbbbbbbbbbbbbb".into())).is_some());
     }
 
     #[test]
     fn touch_makes_entry_recent() {
         let dir = tempfile::tempdir().unwrap();
-        put(dir.path(), "a", 600, 300);
-        put(dir.path(), "b", 600, 100);
+        put(dir.path(), "aaaaaaaaaaaaaaaa", 600, 300);
+        put(dir.path(), "bbbbbbbbbbbbbbbb", 600, 100);
         let c = MediaCache::new(dir.path().into(), 700);
-        c.touch(&FileId("a".into()));
+        c.touch(&FileId("aaaaaaaaaaaaaaaa".into()));
         c.evict(&ids(&[])).unwrap();
-        assert!(dir.path().join("a").exists());
-        assert!(!dir.path().join("b").exists());
+        assert!(dir.path().join("aaaaaaaaaaaaaaaa").exists());
+        assert!(!dir.path().join("bbbbbbbbbbbbbbbb").exists());
     }
 
     #[test]
@@ -211,5 +213,16 @@ mod tests {
         let c = MediaCache::new("/nonexistent/sppy-cache".into(), 1);
         assert_eq!(c.used_bytes(), 0);
         assert_eq!(c.evict(&HashSet::new()).unwrap(), 0);
+    }
+
+    #[test]
+    fn paths_are_never_built_from_malformed_ids() {
+        let cache = MediaCache::new(PathBuf::from("/c/media"), 0);
+        let good = FileId("0123456789abcdef".into());
+        assert_eq!(cache.path_for(&good), Some(PathBuf::from("/c/media/0123456789abcdef")));
+        for bad in ["../../.bashrc", "/etc/passwd", "x"] {
+            assert_eq!(cache.path_for(&FileId(bad.into())), None, "{bad}");
+            assert_eq!(cache.complete(&FileId(bad.into())), None, "{bad}");
+        }
     }
 }

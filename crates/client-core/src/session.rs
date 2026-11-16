@@ -566,18 +566,24 @@ impl<L: PlayerLauncher> Session<L> {
         self.snap.room.as_ref()?.playlist.iter().find(|i| i.item_id == id).cloned()
     }
 
+    /// Cache paths of a library item and of each of its subtitles; `None` if the server sent
+    /// an id or extension that is not a plain file name.
     fn cache_paths(
         &self,
         file_id: &FileId,
         item: &Item,
-    ) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+    ) -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)> {
+        let path = self.cache.path_for(file_id)?;
         let dir = self.cache.dir();
         let subs = item
             .subtitles
             .iter()
-            .map(|s| dir.join(format!("{}.sub{}.{}", file_id.0, s.index, s.ext)))
-            .collect();
-        (self.cache.path_for(file_id), subs)
+            .map(|s| {
+                s.is_well_formed()
+                    .then(|| dir.join(format!("{}.sub{}.{}", file_id.0, s.index, s.ext)))
+            })
+            .collect::<Option<_>>()?;
+        Some((path, subs))
     }
 
     /// Library files referenced by the playlist (never evicted).
@@ -681,7 +687,7 @@ impl<L: PlayerLauncher> Session<L> {
 
     fn download_job(&self, item: &Item, file_id: &FileId) -> Option<DownloadJob> {
         let (base, token) = (self.http_base.as_ref()?, self.session_token.as_ref()?);
-        let (dest, subs) = self.cache_paths(file_id, item);
+        let (dest, subs) = self.cache_paths(file_id, item)?;
         let subs = item
             .subtitles
             .iter()
@@ -740,6 +746,13 @@ impl<L: PlayerLauncher> Session<L> {
             ..item.clone()
         };
         let item = &ordered;
+        if let Source::File { file_id } = &item.source
+            && !file_id.is_well_formed()
+        {
+            return Some(Resolved::Rejected {
+                reason: "The server sent a malformed file id: not playing it".into(),
+            });
+        }
         if let Some(path) = self.local_copy(item) {
             return Some(Resolved::Local {
                 path,
@@ -751,9 +764,10 @@ impl<L: PlayerLauncher> Session<L> {
         }
         if let Source::File { file_id } = &item.source {
             // Spec §7.1: local copy, then a completed cache entry, then the delivery mode.
-            if let Some(path) = self.cache.complete(file_id) {
+            if let Some(path) = self.cache.complete(file_id)
+                && let Some((_, subs)) = self.cache_paths(file_id, item)
+            {
                 self.cache.touch(file_id);
-                let (_, subs) = self.cache_paths(file_id, item);
                 let subtitles =
                     subs.into_iter().filter(|p| p.is_file()).map(MediaSource::Path).collect();
                 return Some(Resolved::Local { path, subtitles });
@@ -777,7 +791,7 @@ impl<L: PlayerLauncher> Session<L> {
     /// local files (see [`Self::missing_vobsubs`]); a VobSub not fetched yet is left out.
     fn subtitle_sources(&self, item: &Item, base: &str, token: &str) -> Vec<MediaSource> {
         let Source::File { file_id } = &item.source else { return Vec::new() };
-        let (_, local) = self.cache_paths(file_id, item);
+        let Some((_, local)) = self.cache_paths(file_id, item) else { return Vec::new() };
         item.subtitles
             .iter()
             .zip(local)
@@ -800,7 +814,7 @@ impl<L: PlayerLauncher> Session<L> {
         else {
             return Vec::new();
         };
-        let (_, local) = self.cache_paths(file_id, item);
+        let Some((_, local)) = self.cache_paths(file_id, item) else { return Vec::new() };
         let mut out = Vec::new();
         for (s, idx_path) in item.subtitles.iter().zip(local).filter(|(s, _)| is_vobsub(s)) {
             let sub_path = idx_path.with_extension("sub");

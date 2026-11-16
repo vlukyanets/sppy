@@ -31,6 +31,13 @@ pub struct MediaFolder {
     pub available: bool,
 }
 
+impl Subtitle {
+    /// The extension is short and only letters and digits: clients put it into file names.
+    pub fn is_well_formed(&self) -> bool {
+        (1..=8).contains(&self.ext.len()) && self.ext.bytes().all(|b| b.is_ascii_alphanumeric())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum LibraryNode {

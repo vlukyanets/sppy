@@ -57,3 +57,28 @@ fn ids_are_transparent() {
 fn unit_enums_are_strings() {
     assert_eq!(serde_json::to_value(ControlMode::HostOnly).unwrap(), json!("HostOnly"));
 }
+
+#[test]
+fn file_ids_and_subtitle_extensions_must_be_safe_as_file_names() {
+    assert!(FileId("0123456789abcdef".into()).is_well_formed());
+    for bad in [
+        "",
+        "0123456789abcde",
+        "0123456789abcdef0",
+        "0123456789ABCDEF",
+        "../../etc/passwd",
+        "/etc/passwd",
+        "0123456789abcd/f",
+        "..",
+        "0123456789abcde\u{e9}",
+    ] {
+        assert!(!FileId(bad.into()).is_well_formed(), "{bad:?}");
+    }
+    let sub = |ext: &str| Subtitle { index: 1, label: None, ext: ext.into() };
+    for good in ["srt", "ass", "idx", "sup", "webvtt"] {
+        assert!(sub(good).is_well_formed(), "{good}");
+    }
+    for bad in ["", "../x", "s/rt", "srt\\x", ".srt", "toolongextension", "sr t"] {
+        assert!(!sub(bad).is_well_formed(), "{bad:?}");
+    }
+}
