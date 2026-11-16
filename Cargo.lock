@@ -4227,6 +4227,7 @@ dependencies = [
  "serde",
  "sppy-proto",
  "tempfile",
+ "thiserror 2.0.21",
  "toml",
  "toml_edit",
 ]
@@ -4282,6 +4283,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "sppy-common",
  "sppy-server",
  "tokio",
  "tracing",

@@ -39,7 +39,7 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
 ## Headless server
 
 ```sh
-sppy-server print-tokens          # creates and prints the host and invite tokens
+sppy-server print-tokens          # creates the tokens, prints them and ready links
 sppy-server                       # runs with ~/.config/sppy/server.toml
 ```
 

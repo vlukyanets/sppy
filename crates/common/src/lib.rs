@@ -2,5 +2,6 @@
 
 pub mod config;
 pub mod folders;
+pub mod link;
 pub mod media;
 pub mod natural;

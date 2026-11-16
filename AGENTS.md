@@ -38,12 +38,12 @@ A quick Windows check for crates without TLS:
 |---|---|---|
 | `crates/proto` (`sppy-proto`) | Wire types and messages, serde only | — |
 | `crates/sync` (`sppy-sync`) | Clock estimate, drift controller, echo filter. Pure | — |
-| `crates/common` (`sppy-common`) | Server config, media extensions, fingerprint, natural sort | proto |
+| `crates/common` (`sppy-common`) | Server config, shared folders, links, media extensions, fingerprint, natural sort | proto |
 | `crates/server` (`sppy-server`) | Room state machine, hub, HTTP (`/ws`, `/media`), library | proto, common |
 | `crates/player` (`sppy-player`) | `trait Player`, mpv over JSON IPC, `FakePlayer` (feature `fake`) | — |
 | `crates/client-core` | Session: connection, sync, delivery, local copies, cache | proto, sync, common, player |
 | `bins/app` (`sppy`) | egui desktop app; embeds the server for "Become host" | all |
-| `bins/server` (`sppy-server`) | Headless server CLI | server |
+| `bins/server` (`sppy-server`) | Headless server CLI | server, common |
 
 - `client-core` must not depend on `sppy-server` (only as a dev-dependency for tests).
   Shared code goes to `sppy-common`.
