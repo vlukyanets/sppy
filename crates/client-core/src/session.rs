@@ -555,7 +555,7 @@ impl<L: PlayerLauncher> Session<L> {
         let Some(item) = self.item(id) else { return };
         for (url, path) in self.missing_vobsubs(&item) {
             if let Err(e) = fetch_to_file(&self.http.clone(), &url, &path).await {
-                tracing::warn!("cannot fetch VobSub subtitle: {e}");
+                tracing::warn!("cannot fetch VobSub subtitle: {}", crate::media::redact_tokens(&e));
             }
         }
         let Some(resolved) = self.resolve(&item) else { return };
@@ -877,7 +877,7 @@ impl<L: PlayerLauncher> Session<L> {
         if let Some(p) = &mut self.player
             && let Err(e) = p.load(media, subs).await
         {
-            tracing::warn!("load failed: {e}");
+            tracing::warn!("load failed: {}", crate::media::redact_tokens(&e.to_string()));
         }
         self.send_status();
         let local = delivery == Delivery::Local;

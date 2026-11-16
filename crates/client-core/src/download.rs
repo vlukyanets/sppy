@@ -191,7 +191,8 @@ async fn run_job(
             Ok(()) => break,
             Err(e) => {
                 attempts += 1;
-                tracing::warn!("download of {} failed (attempt {attempts}): {e}", job.url);
+                let line = format!("download of {} failed (attempt {attempts}): {e}", job.url);
+                tracing::warn!("{}", crate::media::redact_tokens(&line));
                 if attempts >= limit {
                     let _ = ev_tx.send(DownloadEvent::Failed { file_id: job.file_id, attempts });
                     return;
@@ -202,7 +203,8 @@ async fn run_job(
     }
     for (url, path) in &job.subs {
         if let Err(e) = fetch_small(&client, url, path).await {
-            tracing::warn!("cannot download subtitle {url}: {e}");
+            let line = format!("cannot download subtitle {url}: {e}");
+            tracing::warn!("{}", crate::media::redact_tokens(&line));
         }
     }
     let _ = ev_tx.send(DownloadEvent::Done { file_id: job.file_id });

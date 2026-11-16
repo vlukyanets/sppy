@@ -71,6 +71,26 @@ pub fn order_subtitles(subs: &[Subtitle], preferred: &[String]) -> Vec<Subtitle>
 }
 
 /// Media URL of a library file on the server.
+/// The text with the value of every `?t=` / `&t=` URL parameter (the session token that
+/// grants access to the server's media) replaced by `…`, for logs.
+pub fn redact_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("t=") {
+        let after = i + 2;
+        let in_query = i > 0 && matches!(rest.as_bytes()[i - 1], b'?' | b'&');
+        out.push_str(&rest[..after]);
+        rest = &rest[after..];
+        if in_query {
+            let end = rest.find(['&', '#', ' ', ')', '"', '\'', '\n']).unwrap_or(rest.len());
+            out.push('…');
+            rest = &rest[end..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn file_url(base: &str, file_id: &str, token: &str) -> String {
     format!("{base}/media/{file_id}?t={}", encode_query(token))
 }
@@ -225,5 +245,15 @@ mod order_tests {
     fn no_preferences_keep_order() {
         let subs = [sub(5, Some("en")), sub(6, None)];
         assert_eq!(order(&subs, &[]), vec![5, 6]);
+    }
+
+    #[test]
+    fn tokens_are_cut_out_of_log_lines() {
+        let line = "download of http://h:1/media/ab?t=se%2Bcret failed: error sending request \
+                    for url (http://h:1/media/ab/sub/1?t=other&x=1)";
+        let clean = redact_tokens(line);
+        assert!(!clean.contains("se%2Bcret") && !clean.contains("other"), "{clean}");
+        assert!(clean.contains("/media/ab?t=…") && clean.contains("?t=…&x=1"), "{clean}");
+        assert_eq!(redact_tokens("no tokens here: t=1, at=2"), "no tokens here: t=1, at=2");
     }
 }
