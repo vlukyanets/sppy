@@ -187,6 +187,24 @@ pub fn invite_options(public_address: Option<&str>, local: &[LocalIp]) -> Vec<In
         .collect()
 }
 
+/// Check an address typed by the user for invite links (`host`, `host:port` or a
+/// `sppy(s)://` link); returns it trimmed, without a token.
+pub fn parse_custom_host(input: &str) -> Result<String, &'static str> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err("Enter a name or an IP address");
+    }
+    let addr = parse_address(s).map_err(|_| "Not an address: use host or host:port")?;
+    if addr.host.parse::<IpAddr>().is_ok_and(|ip| ip.is_unspecified()) {
+        return Err("Nobody can connect to this address: enter one others can reach");
+    }
+    let scheme_end = s.find("://").map_or(0, |i| i + 3);
+    Ok(match s[scheme_end..].find('/') {
+        Some(slash) => s[..scheme_end + slash].to_owned(),
+        None => s.to_owned(),
+    })
+}
+
 /// Index of the remembered choice, or of the first option when it is gone.
 pub fn pick_option(options: &[InviteHost], saved: Option<&str>) -> usize {
     saved.and_then(|k| options.iter().position(|o| o.key() == k)).unwrap_or(0)
@@ -354,6 +372,23 @@ mod choice_tests {
         assert_eq!(opts.last().unwrap(), &(gone, "10.9.9.9 (not found on this computer)".into()));
         let v6any: IpAddr = "::".parse().unwrap();
         assert_eq!(listen_options(&local, v6any).last().unwrap().1, "All addresses (::)");
+    }
+
+    #[test]
+    fn custom_host_is_checked_and_trimmed() {
+        assert_eq!(parse_custom_host(" box.ts.net "), Ok("box.ts.net".into()));
+        assert_eq!(parse_custom_host("203.0.113.7:9000"), Ok("203.0.113.7:9000".into()));
+        assert_eq!(parse_custom_host("[2001:db8::1]"), Ok("[2001:db8::1]".into()));
+        assert_eq!(parse_custom_host("sppy://box:9000/oldtoken"), Ok("sppy://box:9000".into()));
+        assert_eq!(parse_custom_host("box:9000/"), Ok("box:9000".into()));
+        assert!(parse_custom_host("").is_err());
+        assert!(parse_custom_host("my box").is_err());
+        assert!(parse_custom_host("box:notaport").is_err());
+        assert!(parse_custom_host("http://box").is_err());
+        assert!(parse_custom_host("0.0.0.0").is_err());
+        assert!(parse_custom_host("[::]:8740").is_err());
+        let link = InviteHost::Public(parse_custom_host("sppy://box:9000/old").unwrap());
+        assert_eq!(link.link(8740, "new"), "sppy://box:9000/new");
     }
 
     #[test]

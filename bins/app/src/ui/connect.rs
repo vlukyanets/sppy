@@ -2,6 +2,7 @@
 
 use sppy_client_core::api::{ConnState, Snapshot, UiCommand};
 use sppy_client_core::config::DeliveryMode;
+use sppy_client_core::netaddr;
 
 use crate::app::SppyApp;
 
@@ -30,23 +31,61 @@ fn mode_switch(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     }
 }
 
-/// Which address of this computer goes into the invite link.
+/// Which address goes into the invite link: one of this computer's, or one typed in.
 fn invite_host_choice(app: &mut SppyApp, ui: &mut egui::Ui) {
+    if app.ui.custom_host.is_some() {
+        custom_host_edit(app, ui);
+        return;
+    }
     let (options, chosen) = app.invite_hosts();
-    let Some(current) = options.get(chosen) else { return };
+    let other = options.len();
     let mut picked = chosen;
+    let current = options.get(chosen).map(|o| o.label()).unwrap_or_default();
     egui::ComboBox::from_id_salt("invite-host")
-        .selected_text(current.label())
+        .selected_text(current)
         .show_ui(ui, |ui| {
             for (i, o) in options.iter().enumerate() {
                 ui.selectable_value(&mut picked, i, o.label());
             }
+            ui.separator();
+            ui.selectable_value(&mut picked, other, "Other address…");
         })
         .response
         .on_hover_text("Address put into the invite link: pick the one others can reach");
-    if picked != chosen {
+    if picked == other {
+        app.ui.custom_host = Some(app.config.host.public_address.clone().unwrap_or_default());
+    } else if picked != chosen {
         app.config.invite_host = Some(options[picked].key());
         app.save_config();
+    }
+}
+
+/// Text field for an address others reach this computer at (saved as the public address).
+fn custom_host_edit(app: &mut SppyApp, ui: &mut egui::Ui) {
+    let Some(text) = app.ui.custom_host.as_mut() else { return };
+    let edit = ui
+        .add(egui::TextEdit::singleline(text).hint_text("host or host:port").desired_width(200.0));
+    if !edit.has_focus() && !edit.lost_focus() {
+        edit.request_focus();
+    }
+    let parsed = netaddr::parse_custom_host(text);
+    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let ok = ui.add_enabled(parsed.is_ok(), egui::Button::new("OK")).clicked();
+    let cancel = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+    if let Err(e) = &parsed
+        && !text.trim().is_empty()
+    {
+        ui.colored_label(super::RED, *e);
+    }
+    if cancel {
+        app.ui.custom_host = None;
+    } else if (ok || enter)
+        && let Ok(host) = parsed
+    {
+        app.config.host.public_address = Some(host.clone());
+        app.config.invite_host = Some(host);
+        app.save_config();
+        app.ui.custom_host = None;
     }
 }
 

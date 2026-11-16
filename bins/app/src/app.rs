@@ -46,6 +46,8 @@ pub struct UiState {
     /// This machine's addresses, refreshed while hosting or in the settings.
     pub local_ips: Vec<LocalIp>,
     local_ips_at: Option<Instant>,
+    /// The invite address being typed ("Other address…").
+    pub custom_host: Option<String>,
     /// Folders the core searches for local copies, as last sent to it.
     pub media_folders: Vec<std::path::PathBuf>,
 }
@@ -106,6 +108,7 @@ impl SppyApp {
             player_problem: None,
             local_ips: Vec::new(),
             local_ips_at: None,
+            custom_host: None,
             media_folders: config.media_folders(),
         };
         let events = handle.subscribe_events();
