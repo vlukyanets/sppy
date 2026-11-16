@@ -16,6 +16,7 @@ How to test: [TESTING.md](TESTING.md). User documentation: [README.md](README.md
 - One logical change per commit. Every commit builds and passes the checks below.
 - Pushing is done when the owner asks. Tags and GitHub Releases (`v*` tags publish a
   release) need the owner's explicit approval every time.
+- The package version (`workspace.package.version`) is the owner's: never bump it.
 - Never put personal data (e-mails, names, machine paths) into the repository, logs,
   test fixtures or requests to external services.
 
