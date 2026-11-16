@@ -30,7 +30,8 @@ Run each instance with its own home so they do not share config and cache:
 `SPPY_HOME=/tmp/sppy-a cargo run -p sppy-app` and `SPPY_HOME=/tmp/sppy-b cargo run -p sppy-app`.
 
 1. A: Settings → Hosting → add a media folder (with a video and a `.srt` next to it), Save,
-   **Become host**, **Copy invite link**.
+   **Become host**. Pick an address in the list next to **Copy invite link** (or
+   *Other address…* to type one), then **Copy invite link**.
 2. B: paste the link, nickname, **Connect**. Both list two participants.
 3. A: Library → `+` a file; Playlist shows it; both mpv windows load it; **Play**.
 4. Subtitles appear in both players.
@@ -41,7 +42,9 @@ Run each instance with its own home so they do not share config and cache:
 8. B: switch to **Preload**, select another item → progress bar in Participants, then
    playback from the cache. Settings shows the cache size; **Clear cache** keeps playlist files.
 9. B: Settings → My media folders → add a folder containing a renamed copy of a library
-   file → that item plays from the local copy (Participants shows `local`).
+   file, Save → "Video files found" updates and that item plays from the local copy
+   (Participants shows `local`). Copy another file there, press **Rescan** → it is found.
+   A in **Preload** plays library files directly (`local`), nothing is downloaded.
 10. Long stall: throttle B (e.g. `--cache-secs=1` in extra args plus a slow link, or
     `tc qdisc add dev lo root netem rate 1mbit`) → after 10 s everyone waits for B and
     resumes once B has buffered.
