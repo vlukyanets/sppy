@@ -30,7 +30,10 @@ pub struct DownloadJob {
     pub dest: PathBuf,
     /// `(url, path)` of subtitles fetched after the video (best effort).
     pub subs: Vec<(String, PathBuf)>,
+    /// The size the fingerprint promises: a server announcing another size is refused.
     pub total_hint: Option<u64>,
+    /// No single file may be bigger (the cache limit).
+    pub max_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,7 +205,7 @@ async fn run_job(
         }
     }
     for (url, path) in &job.subs {
-        if let Err(e) = fetch_small(&client, url, path).await {
+        if let Err(e) = fetch_to_file(&client, url, path, job.max_bytes).await {
             let line = format!("cannot download subtitle {url}: {e}");
             tracing::warn!("{}", crate::media::redact_tokens(&line));
         }
@@ -269,6 +272,12 @@ async fn download_once(
             return Err(format!("HTTP {status}"));
         }
     };
+    if job.total_hint.is_some_and(|hint| hint != total) {
+        return Err(format!("the server announces {total} bytes, the fingerprint says otherwise"));
+    }
+    if total > job.max_bytes {
+        return Err(format!("{total} bytes do not fit into the cache"));
+    }
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -281,6 +290,9 @@ async fn download_once(
     let mut last = Instant::now();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
+        if bytes + chunk.len() as u64 > total {
+            return Err(format!("the server sends more than the {total} bytes it announced"));
+        }
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         bytes += chunk.len() as u64;
         if last.elapsed() >= PROGRESS_INTERVAL {
@@ -299,11 +311,47 @@ async fn download_once(
     Ok(())
 }
 
-async fn fetch_small(client: &reqwest::Client, url: &str, path: &Path) -> Result<(), String> {
+/// Download `url` into `path` piece by piece (never the whole body in memory), through
+/// `<path>.part`. More than the announced size or than `max_bytes` is refused and the part
+/// removed.
+pub async fn fetch_to_file(
+    client: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<(), String> {
     let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    let body = resp.bytes().await.map_err(|e| e.to_string())?;
-    tokio::fs::write(path, &body).await.map_err(|e| e.to_string())
+    let limit = resp.content_length().unwrap_or(max_bytes);
+    if limit > max_bytes {
+        return Err(format!("{limit} bytes do not fit into the cache"));
+    }
+    if let Some(dir) = path.parent() {
+        tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
+    }
+    let part = part_path(path);
+    let result = async {
+        let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+        let mut bytes = 0u64;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            bytes += chunk.len() as u64;
+            if bytes > limit {
+                return Err(format!("more than {limit} bytes"));
+            }
+            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        }
+        file.flush().await.map_err(|e| e.to_string())
+    }
+    .await;
+    match result {
+        Ok(()) => tokio::fs::rename(&part, path).await.map_err(|e| e.to_string()),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&part).await;
+            Err(e)
+        }
+    }
 }

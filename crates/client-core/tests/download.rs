@@ -39,6 +39,13 @@ async fn serve_full(State(s): State<Srv>) -> Response {
     tokio::fs::read(&s.file).await.unwrap().into_response()
 }
 
+/// A hostile server: 64 KiB chunks forever, no Content-Length.
+async fn serve_endless() -> Response {
+    let chunk = axum::body::Bytes::from(vec![0u8; 64 * 1024]);
+    let stream = futures_util::stream::repeat_with(move || Ok::<_, std::io::Error>(chunk.clone()));
+    Body::from_stream(stream).into_response()
+}
+
 fn content(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i * 7 % 256) as u8).collect()
 }
@@ -51,6 +58,7 @@ async fn start(dir: &Path, data: &[u8], fail_first: usize) -> (SocketAddr, Srv) 
     let app = Router::new()
         .route("/f", get(serve))
         .route("/full", get(serve_full))
+        .route("/endless", get(serve_endless))
         .with_state(srv.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -59,7 +67,14 @@ async fn start(dir: &Path, data: &[u8], fail_first: usize) -> (SocketAddr, Srv) 
 }
 
 fn job(id: &str, url: String, dest: PathBuf) -> DownloadJob {
-    DownloadJob { file_id: FileId(id.into()), url, dest, subs: vec![], total_hint: None }
+    DownloadJob {
+        file_id: FileId(id.into()),
+        url,
+        dest,
+        subs: vec![],
+        total_hint: None,
+        max_bytes: u64::MAX,
+    }
 }
 
 fn fast() -> Vec<Duration> {
@@ -186,4 +201,71 @@ async fn downloads_subtitles_with_the_file() {
     dl.enqueue(j, Priority::Current);
     until_final(&mut rx).await;
     assert_eq!(std::fs::read(dir.path().join("a.sub0.srt")).unwrap(), data);
+}
+
+fn files(dir: &Path) -> Vec<(String, u64)> {
+    let mut v: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| (e.file_name().into_string().unwrap(), e.metadata().unwrap().len()))
+        .collect();
+    v.sort();
+    v
+}
+
+#[tokio::test]
+async fn stops_when_the_server_sends_more_than_announced() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _) = start(dir.path(), &content(10), 0).await;
+    let (dl, mut rx) = Downloader::with_backoff(reqwest::Client::new(), fast());
+    let mut j = job("a", format!("http://{addr}/endless"), dir.path().join("a"));
+    j.total_hint = Some(100_000);
+    dl.enqueue(j, Priority::Current);
+    let (last, _) = until_final(&mut rx).await;
+    assert!(matches!(last, DownloadEvent::Failed { .. }), "{last:?}");
+    assert!(!dir.path().join("a").exists());
+    assert!(files(dir.path()).iter().all(|(_, size)| *size <= 100_000), "{:?}", files(dir.path()));
+}
+
+#[tokio::test]
+async fn refuses_a_file_bigger_than_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, srv) = start(dir.path(), &content(100_000), 0).await;
+    let (dl, mut rx) = Downloader::with_backoff(reqwest::Client::new(), fast());
+    let mut j = job("a", format!("http://{addr}/f"), dir.path().join("a"));
+    j.max_bytes = 50_000;
+    dl.enqueue(j, Priority::Current);
+    let (last, _) = until_final(&mut rx).await;
+    assert!(matches!(last, DownloadEvent::Failed { .. }), "{last:?}");
+    assert!(!dir.path().join("a").exists() && !dir.path().join("a.part").exists());
+    assert!(!srv.ranges.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn refuses_a_size_other_than_the_fingerprint_says() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _) = start(dir.path(), &content(100_000), 0).await;
+    let (dl, mut rx) = Downloader::with_backoff(reqwest::Client::new(), fast());
+    let mut j = job("a", format!("http://{addr}/f"), dir.path().join("a"));
+    j.total_hint = Some(99_999);
+    dl.enqueue(j, Priority::Current);
+    let (last, _) = until_final(&mut rx).await;
+    assert!(matches!(last, DownloadEvent::Failed { .. }), "{last:?}");
+    assert!(!dir.path().join("a").exists());
+}
+
+#[tokio::test]
+async fn an_endless_subtitle_is_cut_off_and_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _) = start(dir.path(), &content(1_000), 0).await;
+    let (dl, mut rx) = Downloader::with_backoff(reqwest::Client::new(), fast());
+    let mut j = job("a", format!("http://{addr}/f"), dir.path().join("a"));
+    j.max_bytes = 1 << 20;
+    j.subs = vec![(format!("http://{addr}/endless"), dir.path().join("a.sub0.srt"))];
+    dl.enqueue(j, Priority::Current);
+    let (last, _) = until_final(&mut rx).await;
+    assert_eq!(last, DownloadEvent::Done { file_id: FileId("a".into()) });
+    assert!(dir.path().join("a").exists(), "the video itself is fine");
+    let left: Vec<_> = files(dir.path()).into_iter().filter(|(n, _)| n.contains(".sub0")).collect();
+    assert!(left.is_empty(), "nothing of the subtitle is left: {left:?}");
 }

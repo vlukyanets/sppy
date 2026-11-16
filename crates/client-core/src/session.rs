@@ -554,7 +554,10 @@ impl<L: PlayerLauncher> Session<L> {
         };
         let Some(item) = self.item(id) else { return };
         for (url, path) in self.missing_vobsubs(&item) {
-            if let Err(e) = fetch_to_file(&self.http.clone(), &url, &path).await {
+            let max = self.cache_limit_bytes();
+            if let Err(e) =
+                crate::download::fetch_to_file(&self.http.clone(), &url, &path, max).await
+            {
                 tracing::warn!("cannot fetch VobSub subtitle: {}", crate::media::redact_tokens(&e));
             }
         }
@@ -584,6 +587,11 @@ impl<L: PlayerLauncher> Session<L> {
             })
             .collect::<Option<_>>()?;
         Some((path, subs))
+    }
+
+    /// The cache limit: also the most a single download may take.
+    fn cache_limit_bytes(&self) -> u64 {
+        self.config.cache_limit_gb.saturating_mul(1 << 30)
     }
 
     /// Library files referenced by the playlist (never evicted).
@@ -709,6 +717,7 @@ impl<L: PlayerLauncher> Session<L> {
             dest,
             subs,
             total_hint: item.fingerprint.as_ref().map(|f| f.size),
+            max_bytes: self.cache_limit_bytes(),
         })
     }
 
@@ -1280,20 +1289,4 @@ impl IndexTask {
             let _ = tx.send(n);
         });
     }
-}
-
-async fn fetch_to_file(
-    client: &reqwest::Client,
-    url: &str,
-    path: &std::path::Path,
-) -> Result<(), String> {
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    let body = resp.bytes().await.map_err(|e| e.to_string())?;
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
-    }
-    tokio::fs::write(path, &body).await.map_err(|e| e.to_string())
 }
