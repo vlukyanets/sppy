@@ -496,6 +496,7 @@ pub(super) fn file_info(id: &str) -> FileInfo {
         file_id: FileId(id.into()),
         title: format!("{id}.mkv"),
         fingerprint: None,
+        duration_ms: None,
         subtitles: vec![],
     }
 }
@@ -858,28 +859,35 @@ mod status {
             MediaStatus::Ready { duration_ms: Some(61_000), title: Some("Other".into()) },
         );
         let item = &r.state().playlist[0];
-        assert_eq!(item.duration_ms, Some(60_000));
+        assert_eq!(item.duration_ms, Some(61_000), "the largest reported duration");
         assert_eq!(item.title, "Clip");
+        status(&mut r, 0, g, 1, MediaStatus::Ready { duration_ms: Some(1), title: None });
+        assert_eq!(
+            r.state().playlist[0].duration_ms,
+            Some(61_000),
+            "a smaller one changes nothing"
+        );
     }
 
     #[test]
     fn item_ended_advances() {
-        let (mut r, h, _) = playing_room();
-        let effects = r.command(5000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        let (mut r, h, g) = playing_room();
+        assert!(r.command(5000, h, ClientMsg::ItemEnded { item_id: ItemId(1) }).is_empty());
+        let effects = r.command(5000, g, ClientMsg::ItemEnded { item_id: ItemId(1) });
         let p = last_playback(&effects);
         assert_eq!(p.item_id, Some(ItemId(2)));
         assert_eq!(p.hold.unwrap().reason, HoldReason::ItemStart);
     }
 
     #[test]
-    fn item_ended_too_early_ignored() {
-        let (mut r, h, _) = playing_room();
-        status(&mut r, 0, h, 1, MediaStatus::Ready { duration_ms: Some(60_000), title: None });
-        let effects = r.command(30_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
-        assert!(effects.is_empty());
+    fn an_inflated_duration_does_not_hold_up_the_end() {
+        let (mut r, h, g) = playing_room();
+        // Someone reports far more than the link really lasts.
+        status(&mut r, 0, g, 1, MediaStatus::Ready { duration_ms: Some(600_000), title: None });
+        r.command(30_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
         assert_eq!(r.playback().item_id, Some(ItemId(1)));
-        r.command(57_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
-        assert_eq!(r.playback().item_id, Some(ItemId(2)));
+        r.command(30_000, g, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        assert_eq!(r.playback().item_id, Some(ItemId(2)), "everyone reached the end");
     }
 
     #[test]
@@ -1217,5 +1225,171 @@ mod v2 {
             })
             .unwrap();
         assert_eq!(entries[0].drift_ms, Some(-42));
+    }
+}
+
+/// The server ends items itself: by the file's own duration when it knows it, otherwise
+/// when every active participant reached the end (spec §6.1, "End of item").
+mod item_end {
+    use super::*;
+
+    fn library_room(duration_ms: Option<u64>) -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let info = |id: &str| FileInfo { duration_ms, ..file_info(id) };
+        r.set_library(0, vec![info("a"), info("b")]);
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().is_playing());
+        (r, h, g)
+    }
+
+    #[test]
+    fn the_files_own_duration_is_sent_and_beats_reports() {
+        let (mut r, _, g) = library_room(Some(90_000));
+        assert_eq!(r.state().playlist[0].duration_ms, Some(90_000));
+        status(&mut r, 0, g, 1, MediaStatus::Ready { duration_ms: Some(1_000), title: None });
+        assert_eq!(r.state().playlist[0].duration_ms, Some(90_000));
+    }
+
+    #[test]
+    fn the_room_moves_on_at_the_end_even_with_nobody_watching() {
+        let (mut r, h, g) = library_room(Some(10_000));
+        status(&mut r, 100, h, 1, MediaStatus::PlayerClosed);
+        r.disconnected(200, g);
+        assert!(
+            r.tick(9_999)
+                .iter()
+                .all(|e| !matches!(e, Effect::Broadcast { msg: ServerMsg::Playback(_) }))
+        );
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        let effects = r.tick(10_000);
+        assert_eq!(last_playback(&effects).item_id, Some(ItemId(2)));
+    }
+
+    #[test]
+    fn players_cannot_end_an_item_whose_duration_the_server_knows() {
+        let (mut r, h, g) = library_room(Some(60_000));
+        for pid in [h, g] {
+            assert!(r.command(20_000, pid, ClientMsg::ItemEnded { item_id: ItemId(1) }).is_empty());
+        }
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        r.tick(60_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(2)));
+    }
+
+    #[test]
+    fn a_paused_or_waiting_room_does_not_move_on() {
+        let (mut r, h, _) = library_room(Some(10_000));
+        r.command(5_000, h, ClientMsg::Pause { req_id: 2, position_ms: None });
+        r.tick(60_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        r.test_set_hold(Some(Hold { reason: HoldReason::Stalled, waiting_for: vec![h] }));
+        r.command(60_000, h, ClientMsg::Play { req_id: 3, position_ms: None });
+        r.tick(120_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+    }
+
+    #[test]
+    fn the_last_item_stops_at_its_end() {
+        let mut r = room();
+        let h = host(&mut r);
+        r.set_library(0, vec![FileInfo { duration_ms: Some(10_000), ..file_info("a") }]);
+        add(&mut r, 0, h, vec![file_src("a")], None);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, ready());
+        let p = last_playback(&r.tick(10_500));
+        assert_eq!((p.item_id, p.paused, p.position_ms), (Some(ItemId(1)), true, 10_000));
+        assert!(r.tick(11_000).is_empty(), "stays there");
+    }
+
+    #[test]
+    fn one_participant_alone_cannot_end_a_link() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, ready());
+        // The guest lies first: a 1 ms duration, then "ended".
+        status(&mut r, 0, g, 1, MediaStatus::Ready { duration_ms: Some(1), title: None });
+        r.tick(5_000);
+        assert!(r.command(5_000, g, ClientMsg::ItemEnded { item_id: ItemId(1) }).is_empty());
+        assert_eq!(r.playback().item_id, Some(ItemId(1)), "the guest cannot skip");
+        status(&mut r, 5_000, h, 1, MediaStatus::Ready { duration_ms: Some(30_000), title: None });
+        r.command(30_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        assert_eq!(r.playback().item_id, Some(ItemId(2)), "everyone has reached the end");
+    }
+
+    #[test]
+    fn a_link_moves_on_late_if_a_player_never_reports_its_end() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, MediaStatus::Ready { duration_ms: Some(30_000), title: None });
+        status(&mut r, 0, g, 1, ready());
+        r.command(30_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        r.tick(39_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)), "the guest may still be playing");
+        r.tick(40_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(2)), "10 s after the reported end");
+    }
+
+    #[test]
+    fn a_clip_shorter_than_the_start_guard_still_ends() {
+        let mut r = room();
+        let h = host(&mut r);
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, MediaStatus::Ready { duration_ms: Some(2_000), title: None });
+        assert!(
+            r.command(500, h, ClientMsg::ItemEnded { item_id: ItemId(1) }).is_empty(),
+            "a stale EOF"
+        );
+        r.command(2_000, h, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        assert_eq!(r.playback().item_id, Some(ItemId(2)));
+    }
+
+    #[test]
+    fn participants_who_left_do_not_hold_up_the_end() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(
+            &mut r,
+            0,
+            h,
+            vec![Source::Url { url: "https://a".into() }, Source::Url { url: "https://b".into() }],
+            None,
+        );
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        status(&mut r, 1_000, h, 1, MediaStatus::PlayerClosed);
+        r.command(20_000, g, ClientMsg::ItemEnded { item_id: ItemId(1) });
+        assert_eq!(r.playback().item_id, Some(ItemId(2)));
     }
 }

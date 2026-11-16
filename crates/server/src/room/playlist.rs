@@ -13,6 +13,8 @@ pub struct FileInfo {
     pub file_id: FileId,
     pub title: String,
     pub fingerprint: Option<Fingerprint>,
+    /// From the file's header: the server's own knowledge, above what players report.
+    pub duration_ms: Option<u64>,
     pub subtitles: Vec<Subtitle>,
 }
 
@@ -31,6 +33,11 @@ impl Room {
             if item.fingerprint != info.fingerprint || item.subtitles != info.subtitles {
                 item.fingerprint = info.fingerprint.clone();
                 item.subtitles = info.subtitles.clone();
+                changed = true;
+            }
+            // The server's own reading of the file wins over what players reported.
+            if info.duration_ms.is_some() && item.duration_ms != info.duration_ms {
+                item.duration_ms = info.duration_ms;
                 changed = true;
             }
         }
@@ -53,20 +60,23 @@ impl Room {
         }
         let mut new_items = Vec::with_capacity(sources.len());
         for source in sources {
-            let (title, fingerprint, subtitles) = match &source {
+            let (title, fingerprint, subtitles, duration_ms) = match &source {
                 Source::File { file_id } => match self.catalog.get(file_id) {
-                    Some(info) => {
-                        (info.title.clone(), info.fingerprint.clone(), info.subtitles.clone())
-                    }
+                    Some(info) => (
+                        info.title.clone(),
+                        info.fingerprint.clone(),
+                        info.subtitles.clone(),
+                        info.duration_ms,
+                    ),
                     None => return self.denied(pid, req_id, ErrorCode::UnknownFile),
                 },
-                Source::Url { url } => (url.clone(), None, Vec::new()),
+                Source::Url { url } => (url.clone(), None, Vec::new(), None),
             };
             new_items.push(Item {
                 item_id: ItemId(0),
                 source,
                 title,
-                duration_ms: None,
+                duration_ms,
                 fingerprint,
                 subtitles,
                 added_by: pid,

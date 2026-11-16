@@ -43,7 +43,7 @@ impl SharedMedia {
 pub fn scan_with_fingerprints(roots: &[MediaRoot], data_dir: &Path) -> Library {
     let mut lib = Library::scan(roots);
     let mut cache = FingerprintCache::load(data_dir);
-    if lib.fill_fingerprints(&mut cache) > 0
+    if lib.fill_metadata(&mut cache) > 0
         && let Err(e) = cache.save(data_dir)
     {
         tracing::warn!("cannot save fingerprint cache: {e}");

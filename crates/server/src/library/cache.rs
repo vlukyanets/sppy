@@ -16,6 +16,12 @@ struct Entry {
     mtime_secs: u64,
     mtime_nanos: u32,
     fingerprint: Fingerprint,
+    /// From the container header; `None` when it does not say (or for AVI, TS, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    /// The header was read; entries from before durations were cached lack it.
+    #[serde(default)]
+    probed: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -53,19 +59,45 @@ impl FingerprintCache {
         crate::tokens::write_private_atomic(&data_dir.join(FILE_NAME), &json)
     }
 
-    pub fn get(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<&Fingerprint> {
+    fn entry(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<&Entry> {
         let (secs, nanos) = split(mtime);
         self.entries
             .get(path.to_string_lossy().as_ref())
             .filter(|e| e.size == size && e.mtime_secs == secs && e.mtime_nanos == nanos)
-            .map(|e| &e.fingerprint)
+    }
+
+    pub fn get(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<&Fingerprint> {
+        self.entry(path, size, mtime).map(|e| &e.fingerprint)
+    }
+
+    /// The cached duration: `Some(None)` when the header was read and had none.
+    pub fn duration(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<Option<u64>> {
+        self.entry(path, size, mtime).filter(|e| e.probed).map(|e| e.duration_ms)
     }
 
     pub fn insert(&mut self, path: &Path, size: u64, mtime: SystemTime, fingerprint: Fingerprint) {
         let (mtime_secs, mtime_nanos) = split(mtime);
         let path = path.to_string_lossy().into_owned();
-        self.entries
-            .insert(path.clone(), Entry { path, size, mtime_secs, mtime_nanos, fingerprint });
+        self.entries.insert(
+            path.clone(),
+            Entry {
+                path,
+                size,
+                mtime_secs,
+                mtime_nanos,
+                fingerprint,
+                duration_ms: None,
+                probed: false,
+            },
+        );
+    }
+
+    /// Remember the duration read from the header of a cached file.
+    pub fn set_duration(&mut self, path: &Path, duration_ms: Option<u64>) {
+        if let Some(e) = self.entries.get_mut(path.to_string_lossy().as_ref()) {
+            e.duration_ms = duration_ms;
+            e.probed = true;
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -111,12 +143,76 @@ mod tests {
         let roots = [sppy_common::config::MediaRoot { name: "M".into(), path: dir.path().into() }];
         let mut lib = crate::library::Library::scan(&roots);
         let mut cache = FingerprintCache::default();
-        assert_eq!(lib.fill_fingerprints(&mut cache), 1);
+        assert_eq!(lib.fill_metadata(&mut cache), 1);
         assert_eq!(cache.len(), 1);
         let f = lib.files().next().unwrap();
         assert_eq!(f.fingerprint.as_ref().unwrap().size, 3);
         let mut lib2 = crate::library::Library::scan(&roots);
-        assert_eq!(lib2.fill_fingerprints(&mut cache), 0, "served from cache");
+        assert_eq!(lib2.fill_metadata(&mut cache), 0, "served from cache");
         assert!(lib2.files().next().unwrap().fingerprint.is_some());
+    }
+
+    /// A minimal Matroska file whose header says 1.5 s.
+    fn tiny_mkv() -> Vec<u8> {
+        let el = |id: &[u8], payload: &[u8]| {
+            let mut v = id.to_vec();
+            v.push(0x80 | payload.len() as u8);
+            v.extend_from_slice(payload);
+            v
+        };
+        let info = el(&[0x15, 0x49, 0xA9, 0x66], &el(&[0x44, 0x89], &1_500.0f64.to_be_bytes()));
+        [el(&[0x1A, 0x45, 0xDF, 0xA3], b""), el(&[0x18, 0x53, 0x80, 0x67], &info)].concat()
+    }
+
+    #[test]
+    fn durations_are_read_from_headers_and_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.mkv"), tiny_mkv()).unwrap();
+        std::fs::write(dir.path().join("b.avi"), b"RIFF....AVI ").unwrap();
+        let roots = [sppy_common::config::MediaRoot { name: "M".into(), path: dir.path().into() }];
+        let mut lib = crate::library::Library::scan(&roots);
+        let mut cache = FingerprintCache::default();
+        assert_eq!(lib.fill_metadata(&mut cache), 2);
+        let duration = |lib: &crate::library::Library, name: &str| {
+            lib.files().find(|f| f.title == name).unwrap().duration_ms
+        };
+        assert_eq!(duration(&lib, "a"), Some(1_500));
+        assert_eq!(duration(&lib, "b"), None, "AVI: left to the players");
+        assert_eq!(
+            lib.file_infos().iter().find(|i| i.title == "a").unwrap().duration_ms,
+            Some(1_500)
+        );
+
+        let data = tempfile::tempdir().unwrap();
+        cache.save(data.path()).unwrap();
+        let mut cache = FingerprintCache::load(data.path());
+        let mut lib2 = crate::library::Library::scan(&roots);
+        assert_eq!(lib2.fill_metadata(&mut cache), 0, "nothing read again");
+        assert_eq!(duration(&lib2, "a"), Some(1_500));
+    }
+
+    #[test]
+    fn old_cache_entries_get_their_duration_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mkv");
+        std::fs::write(&path, tiny_mkv()).unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        let (secs, nanos) = split(meta.modified().unwrap());
+        let fp = sppy_common::media::fingerprint(&path).unwrap();
+        // An entry written before durations were cached.
+        let old = format!(
+            r#"[{{"path":{:?},"size":{},"mtime_secs":{secs},"mtime_nanos":{nanos},"fingerprint":{}}}]"#,
+            path.to_string_lossy(),
+            meta.len(),
+            serde_json::to_string(&fp).unwrap()
+        );
+        let data = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("library-cache.json"), old).unwrap();
+        let mut cache = FingerprintCache::load(data.path());
+        let roots = [sppy_common::config::MediaRoot { name: "M".into(), path: dir.path().into() }];
+        let mut lib = crate::library::Library::scan(&roots);
+        assert_eq!(lib.fill_metadata(&mut cache), 1, "only the duration is read");
+        assert_eq!(lib.files().next().unwrap().duration_ms, Some(1_500));
+        assert_eq!(lib.files().next().unwrap().fingerprint.as_ref(), Some(&fp));
     }
 }

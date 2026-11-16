@@ -29,6 +29,8 @@ pub struct LibraryFile {
     /// VobSub: subtitle index of an `.idx` → its `.sub` data file.
     pub subtitle_companions: HashMap<u32, PathBuf>,
     pub fingerprint: Option<Fingerprint>,
+    /// From the container header (see [`sppy_common::duration`]).
+    pub duration_ms: Option<u64>,
 }
 
 /// All media files of the configured roots.
@@ -84,29 +86,44 @@ impl Library {
                 file_id: f.file_id.clone(),
                 title: f.title.clone(),
                 fingerprint: f.fingerprint.clone(),
+                duration_ms: f.duration_ms,
                 subtitles: f.subtitles.iter().map(|(s, _)| s.clone()).collect(),
             })
             .collect()
     }
 
-    /// Fill in missing fingerprints (from the cache or by hashing). Returns how many were hashed.
-    pub fn fill_fingerprints(&mut self, cache: &mut FingerprintCache) -> usize {
-        let mut computed = 0;
+    /// Fill in fingerprints and durations, from the cache or by reading the files. Returns
+    /// how many files were read.
+    pub fn fill_metadata(&mut self, cache: &mut FingerprintCache) -> usize {
+        let mut read = 0;
         for f in self.files.iter_mut().filter(|f| f.fingerprint.is_none()) {
-            if let Some(fp) = cache.get(&f.abs_path, f.size, f.mtime) {
-                f.fingerprint = Some(fp.clone());
-                continue;
+            let mut touched = false;
+            match cache.get(&f.abs_path, f.size, f.mtime) {
+                Some(fp) => f.fingerprint = Some(fp.clone()),
+                None => match sppy_common::media::fingerprint(&f.abs_path) {
+                    Ok(fp) => {
+                        cache.insert(&f.abs_path, f.size, f.mtime, fp.clone());
+                        f.fingerprint = Some(fp);
+                        touched = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!("cannot fingerprint {}: {e}", f.abs_path.display());
+                        continue;
+                    }
+                },
             }
-            match sppy_common::media::fingerprint(&f.abs_path) {
-                Ok(fp) => {
-                    cache.insert(&f.abs_path, f.size, f.mtime, fp.clone());
-                    f.fingerprint = Some(fp);
-                    computed += 1;
+            f.duration_ms = match cache.duration(&f.abs_path, f.size, f.mtime) {
+                Some(d) => d,
+                None => {
+                    let d = sppy_common::duration::duration_ms(&f.abs_path);
+                    cache.set_duration(&f.abs_path, d);
+                    touched = true;
+                    d
                 }
-                Err(e) => tracing::warn!("cannot fingerprint {}: {e}", f.abs_path.display()),
-            }
+            };
+            read += usize::from(touched);
         }
-        computed
+        read
     }
 
     /// Folder tree per root: directories first, then files, by name (case-insensitive).
@@ -355,6 +372,7 @@ fn walk(
             subtitles,
             subtitle_companions,
             fingerprint: None,
+            duration_ms: None,
             rel_path,
         });
     }

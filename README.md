@@ -39,6 +39,11 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
 4. Add files from **Library** (or a URL) and press **Play**. Pause and seek either in the
    window or directly in mpv — everyone follows.
 
+When an episode ends the room moves on to the next one by itself. For library files the
+server knows their length (read from MKV, WebM, MP4, MOV and AVI headers), so this happens
+even if nobody has a player open. For links and other formats the room moves on once every
+participant's player has reached the end.
+
 ## Headless server
 
 ```sh

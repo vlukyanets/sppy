@@ -11,7 +11,9 @@ const CHAT_HISTORY: usize = 50;
 const MAX_CHAT_CHARS: usize = 500;
 const PROGRESS_INTERVAL_MS: u64 = 1000;
 /// `ItemEnded` is accepted only this close to the known duration.
-const END_TOLERANCE_MS: u64 = 3000;
+/// Without a duration of its own, the server moves on this long after the largest
+/// reported end even if not every player has reported reaching it.
+const LATE_END_MS: u64 = 10_000;
 /// With an unknown duration, `ItemEnded` before this position is a stale report.
 const MIN_PLAYED_MS: u64 = 3000;
 
@@ -38,10 +40,16 @@ impl Room {
                 self.stalled_since.remove(&pid);
             }
         }
+        let server_knows = self.playlist.iter().find(|i| i.item_id == item_id).is_some_and(|i| {
+            matches!(&i.source, Source::File { file_id }
+                if self.catalog.get(file_id).is_some_and(|f| f.duration_ms.is_some()))
+        });
         if let MediaStatus::Ready { duration_ms, title } = &status
             && let Some(item) = self.playlist.iter_mut().find(|i| i.item_id == item_id)
         {
-            if item.duration_ms.is_none() {
+            // Players' reports only when the server could not read the file; the largest
+            // one, so that one participant cannot shorten the item for everyone.
+            if !server_knows && duration_ms.is_some() && *duration_ms > item.duration_ms {
                 item.duration_ms = *duration_ms;
             }
             if let (Source::Url { url }, Some(title)) = (&item.source, title)
@@ -131,27 +139,63 @@ impl Room {
         vec![self.broadcast_playback(), Self::notice(None, NoticeAction::HoldStarted { hold })]
     }
 
-    pub(super) fn item_ended(&mut self, now_ms: u64, item_id: ItemId) -> Vec<Effect> {
-        if self.playback.item_id != Some(item_id) {
+    /// A player reached the end. Counts only when the server cannot tell the end itself (no
+    /// duration of its own): then the item ends once every active participant got there.
+    pub(super) fn item_ended(
+        &mut self,
+        now_ms: u64,
+        pid: ParticipantId,
+        item_id: ItemId,
+    ) -> Vec<Effect> {
+        if self.playback.item_id != Some(item_id) || self.server_duration().is_some() {
+            return Vec::new();
+        }
+        // A stale EOF right after an item change is not an end: at least 3 s, or half the
+        // reported length for shorter clips, must have played.
+        let reported = self.current_item().and_then(|i| i.duration_ms);
+        let min_played = reported.map_or(MIN_PLAYED_MS, |d| MIN_PLAYED_MS.min(d / 2));
+        if self.playback.hold.is_some() || self.playback.expected_position_ms(now_ms) < min_played {
+            return Vec::new();
+        }
+        self.ended.insert(pid);
+        self.check_item_end(now_ms)
+    }
+
+    /// Called every tick and on every end report: move on when the item is over.
+    pub(super) fn check_item_end(&mut self, now_ms: u64) -> Vec<Effect> {
+        let Some(item) = self.current_item() else { return Vec::new() };
+        if self.playback.hold.is_some() {
             return Vec::new();
         }
         let expected = self.playback.expected_position_ms(now_ms);
-        let duration = self.current_item().and_then(|i| i.duration_ms);
-        let too_early = match duration {
-            Some(d) => expected.saturating_add(END_TOLERANCE_MS) < d,
-            // Unknown duration: at least ignore stale EOFs right after an item change.
-            None => expected < MIN_PLAYED_MS,
+        let over = match self.server_duration() {
+            Some(d) => !self.playback.paused && expected >= d,
+            None => {
+                let active = self.active_ids();
+                let everyone =
+                    !self.ended.is_empty() && active.iter().all(|p| self.ended.contains(p));
+                // A player that never reports its end does not hold the room forever.
+                let late = item.duration_ms.is_some_and(|d| {
+                    !self.playback.paused && expected >= d.saturating_add(LATE_END_MS)
+                });
+                everyone || late
+            }
         };
-        if self.playback.hold.is_some() || too_early {
-            return Vec::new();
-        }
+        if over { self.finish_item(now_ms) } else { Vec::new() }
+    }
+
+    /// The next item, or a pause at the end of the last one.
+    fn finish_item(&mut self, now_ms: u64) -> Vec<Effect> {
+        let Some(item_id) = self.playback.item_id else { return Vec::new() };
+        let duration = self.current_item().and_then(|i| i.duration_ms);
         let mut effects = match self.item_after(item_id) {
             Some(next) => self.change_item(now_ms, Some(next)),
             None => {
                 if self.playback.paused {
                     return Vec::new();
                 }
-                self.rebase(now_ms, duration.unwrap_or(expected));
+                let expected = self.playback.expected_position_ms(now_ms);
+                self.rebase(now_ms, duration.map_or(expected, |d| d.min(expected)));
                 self.playback.paused = true;
                 self.playback.seq += 1;
                 self.playback.cause = None;

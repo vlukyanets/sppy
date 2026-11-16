@@ -51,7 +51,9 @@ Run each instance with its own home so they do not share config and cache:
     `tc qdisc add dev lo root netem rate 1mbit`) → after 10 s everyone waits for B and
     resumes once B has buffered.
 12. A: Kick B (with confirmation) → B sees "You were removed from the room".
-13. Close A's window → B shows "Server unavailable, reconnecting".
+13. Play a library episode, seek close to its end, then close mpv in both windows
+    (`q`): when the episode's time is up the playlist moves to the next one by itself.
+14. Close A's window → B shows "Server unavailable, reconnecting".
 
 ## Manual: headless server over Tailscale
 

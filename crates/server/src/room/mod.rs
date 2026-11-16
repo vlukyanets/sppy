@@ -60,6 +60,8 @@ pub struct Room {
     progress: HashMap<ParticipantId, ProgressEntry>,
     progress_dirty: bool,
     last_progress_ms: Option<u64>,
+    /// Who reported the end of the current item (counts only without a server duration).
+    ended: std::collections::HashSet<ParticipantId>,
 }
 
 impl Room {
@@ -87,6 +89,7 @@ impl Room {
             progress: HashMap::new(),
             progress_dirty: false,
             last_progress_ms: None,
+            ended: Default::default(),
         }
     }
 
@@ -124,6 +127,7 @@ impl Room {
         let mut effects = self.expire_disconnected(now_ms);
         effects.extend(self.check_stalls(now_ms));
         effects.extend(self.flush_progress(now_ms));
+        effects.extend(self.check_item_end(now_ms));
         effects
     }
 
@@ -163,7 +167,7 @@ impl Room {
             ClientMsg::StartWithoutWaiting { req_id } => {
                 self.start_without_waiting(now_ms, pid, req_id)
             }
-            ClientMsg::ItemEnded { item_id } => self.item_ended(now_ms, item_id),
+            ClientMsg::ItemEnded { item_id } => self.item_ended(now_ms, pid, item_id),
             ClientMsg::Chat { text } => self.chat(now_ms, pid, text),
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
             ClientMsg::SetCanControl { req_id, participant_id, allowed } => {
@@ -205,6 +209,15 @@ impl Room {
         self.stalled_since.clear();
         self.progress.clear();
         self.progress_dirty = false;
+        self.ended.clear();
+    }
+
+    /// The current item's duration as the server read it from the file, if it could.
+    fn server_duration(&self) -> Option<u64> {
+        match &self.current_item()?.source {
+            sppy_proto::Source::File { file_id } => self.catalog.get(file_id)?.duration_ms,
+            sppy_proto::Source::Url { .. } => None,
+        }
     }
 
     fn current_item(&self) -> Option<&Item> {
