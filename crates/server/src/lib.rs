@@ -45,6 +45,11 @@ impl ServerHandle {
         self.invite.read().expect("invite lock").clone()
     }
 
+    /// Replace the shared folders (the embedding app saves them itself) and rescan.
+    pub fn set_media_folders(&self, roots: Vec<MediaRoot>) {
+        let _ = self.hub.send(HubInput::SetMediaFolders(roots));
+    }
+
     /// Tell clients we are going away, save state and stop listening.
     pub async fn shutdown(self) {
         let (done_tx, done_rx) = oneshot::channel();
@@ -62,8 +67,25 @@ impl ServerHandle {
     }
 }
 
+/// How the server is run.
+#[derive(Debug, Clone, Default)]
+pub struct StartOptions {
+    /// The config file the server was loaded from: folder changes made by the host are
+    /// saved there. Without it they last until the server stops.
+    pub config_file: Option<PathBuf>,
+}
+
 /// Start a server: load tokens from `data_dir`, bind `config.listen`, spawn the room hub.
 pub async fn start(config: ServerConfig, data_dir: PathBuf) -> Result<ServerHandle, ServerError> {
+    start_with(config, data_dir, StartOptions::default()).await
+}
+
+/// [`start`] with options.
+pub async fn start_with(
+    config: ServerConfig,
+    data_dir: PathBuf,
+    options: StartOptions,
+) -> Result<ServerHandle, ServerError> {
     let (tokens, created) = tokens::load_or_create(&data_dir)?;
     if created {
         tracing::info!("host token: {}", tokens.host);
@@ -91,13 +113,17 @@ pub async fn start(config: ServerConfig, data_dir: PathBuf) -> Result<ServerHand
         Arc::new(media::SharedMedia { library: RwLock::new(library), ..Default::default() });
 
     let (hub_tx, hub_rx) = mpsc::unbounded_channel();
-    let hub = Hub::new(
+    let mut hub = Hub::new(
         room,
         clock,
         data_dir,
         shared,
         media.clone(),
-        config.media.clone(),
+        hub::Folders {
+            roots: config.media.clone(),
+            editable: config.allow_remote_media_changes,
+            config_file: options.config_file,
+        },
         hub_tx.clone(),
     );
     hub.spawn_scan();

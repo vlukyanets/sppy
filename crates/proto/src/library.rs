@@ -21,6 +21,16 @@ pub struct Subtitle {
     pub ext: String,
 }
 
+/// A folder the server shares, as shown to hosts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaFolder {
+    pub name: String,
+    /// Path on the server's machine.
+    pub path: String,
+    /// The folder exists and can be read.
+    pub available: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum LibraryNode {

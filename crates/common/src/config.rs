@@ -25,6 +25,8 @@ pub struct ServerConfig {
     pub stall_hold_secs: u32,
     pub resume_buffer_secs: u32,
     pub media: Vec<MediaRoot>,
+    /// Let the host add and remove shared folders from the app (saved into this file).
+    pub allow_remote_media_changes: bool,
     /// Undocumented; tests shorten it.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "is_default_ping_timeout")]
@@ -47,6 +49,7 @@ impl Default for ServerConfig {
             stall_hold_secs: 10,
             resume_buffer_secs: 10,
             media: Vec::new(),
+            allow_remote_media_changes: true,
             ping_timeout_ms: DEFAULT_PING_TIMEOUT_MS,
         }
     }
@@ -76,6 +79,7 @@ mod tests {
         assert_eq!(c.stall_hold_secs, 10);
         assert_eq!(c.resume_buffer_secs, 10);
         assert!(c.media.is_empty());
+        assert!(c.allow_remote_media_changes);
         assert_eq!(c.ping_timeout_ms, 10_000);
     }
 

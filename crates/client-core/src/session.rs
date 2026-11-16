@@ -14,7 +14,7 @@ use sppy_sync::{
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
-use crate::api::{ConnState, Snapshot, UiCommand, UiEvent};
+use crate::api::{ConnState, ServerFolders, Snapshot, UiCommand, UiEvent};
 use crate::cache::MediaCache;
 use crate::config::{ClientConfig, DeliveryMode};
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
@@ -278,6 +278,7 @@ impl<L: PlayerLauncher> Session<L> {
                 self.snap.connection = ConnState::Idle;
                 self.snap.room = None;
                 self.snap.playback = None;
+                self.snap.server_folders = None;
             }
             UiCommand::Play => {
                 self.request(|req_id| ClientMsg::Play { req_id, position_ms: None });
@@ -318,6 +319,12 @@ impl<L: PlayerLauncher> Session<L> {
             }
             UiCommand::RotateInvite => {
                 self.request(|req_id| ClientMsg::RotateInvite { req_id });
+            }
+            UiCommand::AddServerFolder { path, name } => {
+                self.request(|req_id| ClientMsg::AddMediaFolder { req_id, path, name });
+            }
+            UiCommand::RemoveServerFolder { name } => {
+                self.request(|req_id| ClientMsg::RemoveMediaFolder { req_id, name });
             }
             UiCommand::RescanLibrary => {
                 self.request(|req_id| ClientMsg::RescanLibrary { req_id });
@@ -387,6 +394,8 @@ impl<L: PlayerLauncher> Session<L> {
                 self.snap.connection = ConnState::Connected;
                 self.snap.me = Some(welcome.participant_id);
                 self.snap.is_host = welcome.is_host;
+                // A host gets the folders right after the welcome.
+                self.snap.server_folders = None;
                 self.snap.room = Some(welcome.room);
                 self.snap.playback = Some(welcome.playback);
                 self.snap.chat_history = welcome.chat_history;
@@ -489,6 +498,9 @@ impl<L: PlayerLauncher> Session<L> {
                 let text = match code {
                     ErrorCode::NotPermitted => NO_PERMISSION.to_owned(),
                     ErrorCode::NotHost => "Only the host can do that".to_owned(),
+                    ErrorCode::MediaFolder { problem } => {
+                        crate::notice::folder_problem_text(problem).to_owned()
+                    }
                     other => format!("Request rejected: {other:?}"),
                 };
                 self.osd(&text).await;
@@ -496,6 +508,9 @@ impl<L: PlayerLauncher> Session<L> {
             }
             ServerMsg::Library { roots } => self.snap.library = Some(roots),
             ServerMsg::InviteToken { token } => self.snap.invite_token = Some(token),
+            ServerMsg::MediaFolders { folders, editable } => {
+                self.snap.server_folders = Some(ServerFolders { folders, editable });
+            }
             ServerMsg::Closing { reason } => match reason {
                 CloseReason::Kicked => {
                     self.emit(UiEvent::Error("You were removed from the room".into()));

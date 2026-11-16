@@ -1,0 +1,15 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "MediaFolders",
+  "folders": [
+    {
+      "name": "Movies",
+      "path": "/srv/movies",
+      "available": true
+    }
+  ],
+  "editable": true
+}

@@ -39,6 +39,8 @@ pub struct ClientConfig {
     pub nickname: String,
     pub mode: DeliveryMode,
     pub prefetch_next: bool,
+    /// Old separate list of "my media folders"; moved into `host.media` on load.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub local_media: Vec<PathBuf>,
     /// Preferred subtitle languages, most wanted first (e.g. `["ru", "en"]`).
     pub subtitle_languages: Vec<String>,
@@ -48,7 +50,8 @@ pub struct ClientConfig {
     pub servers: Vec<SavedServer>,
     pub player: PlayerConfig,
     pub advanced: SyncParams,
-    /// Embedded server ("Become host").
+    /// Embedded server ("Become host"). Its `media` are "my media folders": local copies
+    /// are found there, and they are shared while hosting.
     pub host: ServerConfig,
     /// Host put in invite links: a local IP or the public address (unset = best guess).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +92,20 @@ pub enum ConfigError {
 
 impl ClientConfig {
     /// Where downloaded media is kept.
+    /// One list of media folders: the old `local_media` joins `host.media`.
+    pub fn migrated(mut self) -> Self {
+        for path in std::mem::take(&mut self.local_media) {
+            if let Ok(root) = sppy_common::folders::new_folder(&self.host.media, &path, None) {
+                self.host.media.push(root);
+            } else if !self.host.media.iter().any(|r| r.path == path) {
+                // Missing right now (e.g. an unplugged disk): keep it anyway.
+                let name = sppy_common::folders::default_name(&self.host.media, &path);
+                self.host.media.push(sppy_common::config::MediaRoot { name, path });
+            }
+        }
+        self
+    }
+
     /// Folders searched for local copies: "my media folders" and the host's library.
     pub fn media_folders(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
@@ -107,7 +124,8 @@ impl ClientConfig {
     /// Load the config; a missing file gives the defaults.
     pub fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text)
+            Ok(text) => toml::from_str::<Self>(&text)
+                .map(Self::migrated)
                 .map_err(|source| ConfigError::Parse { path: path.to_owned(), source }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(source) => Err(ConfigError::Io { path: path.to_owned(), source }),
@@ -170,6 +188,30 @@ pub fn client_paths() -> ClientPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_local_media_joins_the_host_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let (movies, extra) = (dir.path().join("Movies"), dir.path().join("Extra"));
+        std::fs::create_dir(&movies).unwrap();
+        std::fs::create_dir(&extra).unwrap();
+        let gone = dir.path().join("Unplugged");
+        let text = format!(
+            "local_media = [{:?}, {:?}, {:?}]\n[[host.media]]\nname = \"Films\"\npath = {:?}\n",
+            movies.display().to_string(),
+            extra.display().to_string(),
+            gone.display().to_string(),
+            movies.display().to_string(),
+        );
+        let file = dir.path().join("client.toml");
+        std::fs::write(&file, text).unwrap();
+        let c = ClientConfig::load_or_default(&file).unwrap();
+        assert!(c.local_media.is_empty());
+        let got: Vec<_> = c.host.media.iter().map(|r| (r.name.as_str(), r.path.clone())).collect();
+        assert_eq!(got, [("Films", movies), ("Extra", extra), ("Unplugged", gone)]);
+        c.save(&file).unwrap();
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("local_media"));
+    }
 
     #[test]
     fn config_defaults() {

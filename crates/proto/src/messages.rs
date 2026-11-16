@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ItemId, ParticipantId, ReqId, RoomId};
-use crate::library::LibraryNode;
+use crate::library::{LibraryNode, MediaFolder};
 use crate::notice::NoticeAction;
 use crate::state::{
     ChatMessage, ControlMode, Delivery, MediaStatus, PlaybackState, ProgressEntry, RoomState,
@@ -112,6 +112,19 @@ pub enum ClientMsg {
     StartWithoutWaiting {
         req_id: ReqId,
     },
+    /// Host: share one more folder of the server's machine (`path` as seen by the server).
+    /// Without a name, the folder's own name is used.
+    AddMediaFolder {
+        req_id: ReqId,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// Host: stop sharing a folder.
+    RemoveMediaFolder {
+        req_id: ReqId,
+        name: String,
+    },
 }
 
 impl ClientMsg {
@@ -132,7 +145,9 @@ impl ClientMsg {
             | Kick { req_id, .. }
             | RotateInvite { req_id }
             | RescanLibrary { req_id }
-            | StartWithoutWaiting { req_id } => Some(*req_id),
+            | StartWithoutWaiting { req_id }
+            | AddMediaFolder { req_id, .. }
+            | RemoveMediaFolder { req_id, .. } => Some(*req_id),
             Hello { .. }
             | Ping { .. }
             | Bye
@@ -151,7 +166,9 @@ impl ClientMsg {
 pub enum ErrorCode {
     BadToken,
     SessionExpired,
-    VersionMismatch { server_protocol: u32 },
+    VersionMismatch {
+        server_protocol: u32,
+    },
     NicknameTaken,
     RoomFull,
     NotPermitted,
@@ -159,6 +176,33 @@ pub enum ErrorCode {
     UnknownItem,
     UnknownFile,
     InvalidRequest,
+    /// A media folder change was refused.
+    MediaFolder {
+        problem: MediaFolderProblem,
+    },
+}
+
+/// Why a media folder cannot be added or removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaFolderProblem {
+    /// The server does not allow changing folders remotely.
+    ChangesDisabled,
+    /// The path must be absolute on the server's machine.
+    NotAbsolute,
+    NotFound,
+    NotAFolder,
+    AlreadyShared,
+    NameTaken,
+    /// No shared folder with that name.
+    UnknownFolder,
+    /// The server could not save its config file.
+    CannotSave,
+}
+
+impl From<MediaFolderProblem> for ErrorCode {
+    fn from(problem: MediaFolderProblem) -> Self {
+        ErrorCode::MediaFolder { problem }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,16 +240,38 @@ pub enum Event {
 #[serde(tag = "type")]
 pub enum ServerMsg {
     Welcome(Welcome),
-    Reject { code: ErrorCode, message: String },
-    Pong { client_time_ms: u64, server_time_ms: u64 },
+    Reject {
+        code: ErrorCode,
+        message: String,
+    },
+    Pong {
+        client_time_ms: u64,
+        server_time_ms: u64,
+    },
     Playback(PlaybackState),
     Room(RoomState),
-    ProgressBatch { entries: Vec<ProgressEntry> },
+    ProgressBatch {
+        entries: Vec<ProgressEntry>,
+    },
     Event(Event),
-    Denied { req_id: ReqId, code: ErrorCode },
-    Library { roots: Vec<LibraryNode> },
-    InviteToken { token: String },
-    Closing { reason: CloseReason },
+    Denied {
+        req_id: ReqId,
+        code: ErrorCode,
+    },
+    Library {
+        roots: Vec<LibraryNode>,
+    },
+    InviteToken {
+        token: String,
+    },
+    /// To hosts: the server's shared folders (on join and after every change).
+    MediaFolders {
+        folders: Vec<MediaFolder>,
+        editable: bool,
+    },
+    Closing {
+        reason: CloseReason,
+    },
 }
 
 /// Parse one client text frame.

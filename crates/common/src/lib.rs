@@ -1,5 +1,6 @@
 //! Types and helpers shared by the sppy server and client.
 
 pub mod config;
+pub mod folders;
 pub mod media;
 pub mod natural;

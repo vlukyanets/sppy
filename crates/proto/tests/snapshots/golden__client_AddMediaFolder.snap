@@ -1,0 +1,10 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "AddMediaFolder",
+  "req_id": 15,
+  "path": "/srv/series",
+  "name": "Series"
+}

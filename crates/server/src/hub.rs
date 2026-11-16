@@ -6,7 +6,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use sppy_proto::{Auth, ClientMsg, CloseReason, ErrorCode, ParticipantId, ServerMsg};
+use sppy_common::folders;
+use sppy_proto::{
+    Auth, ClientMsg, CloseReason, ErrorCode, MediaFolder, MediaFolderProblem, ParticipantId,
+    ServerMsg,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::ServerClock;
@@ -43,8 +47,22 @@ pub enum HubInput {
     Shutdown {
         done: oneshot::Sender<()>,
     },
-    /// A (re)scan with fingerprints finished.
-    LibraryUpdated(Library),
+    /// A (re)scan with fingerprints finished; scans older than the last started are dropped.
+    LibraryUpdated {
+        generation: u64,
+        library: Library,
+    },
+    /// The embedding app replaced the shared folders.
+    SetMediaFolders(Vec<MediaRoot>),
+}
+
+/// The shared folders and how they may change.
+pub struct Folders {
+    pub roots: Vec<MediaRoot>,
+    /// The host may change them over the protocol.
+    pub editable: bool,
+    /// Where changes made by the host are saved.
+    pub config_file: Option<PathBuf>,
 }
 
 /// Tokens shared between the hub and the server handle.
@@ -61,7 +79,8 @@ pub struct Hub {
     tokens: SharedTokens,
     conns: HashMap<ParticipantId, (u64, Outbound)>,
     media: Arc<SharedMedia>,
-    media_roots: Vec<MediaRoot>,
+    folders: Folders,
+    scan_generation: u64,
     self_tx: mpsc::UnboundedSender<HubInput>,
     dirty: bool,
     last_save_ms: Option<u64>,
@@ -75,7 +94,7 @@ impl Hub {
         data_dir: PathBuf,
         tokens: SharedTokens,
         media: Arc<SharedMedia>,
-        media_roots: Vec<MediaRoot>,
+        folders: Folders,
         self_tx: mpsc::UnboundedSender<HubInput>,
     ) -> Hub {
         Hub {
@@ -85,7 +104,8 @@ impl Hub {
             tokens,
             conns: HashMap::new(),
             media,
-            media_roots,
+            folders,
+            scan_generation: 0,
             self_tx,
             dirty: false,
             last_save_ms: None,
@@ -93,8 +113,10 @@ impl Hub {
     }
 
     /// Hash fingerprints / rescan in the background; the result comes back as `LibraryUpdated`.
-    pub fn spawn_scan(&self) {
-        let roots = self.media_roots.clone();
+    pub fn spawn_scan(&mut self) {
+        self.scan_generation += 1;
+        let generation = self.scan_generation;
+        let roots = self.folders.roots.clone();
         let data_dir = self.data_dir.clone();
         let tx = self.self_tx.clone();
         tokio::spawn(async move {
@@ -102,7 +124,7 @@ impl Hub {
                 .await
             {
                 Ok(lib) => {
-                    let _ = tx.send(HubInput::LibraryUpdated(lib));
+                    let _ = tx.send(HubInput::LibraryUpdated { generation, library: lib });
                 }
                 Err(e) => tracing::error!("library scan failed: {e}"),
             }
@@ -142,7 +164,10 @@ impl Hub {
         match input {
             HubInput::Join { auth, nickname, conn_id, out, reply } => {
                 let result = match auth {
-                    Auth::Host { token } if tokens::token_eq(&token, &self.tokens.host) => {
+                    // A link carries one token: the host token in it makes you the host.
+                    Auth::Host { token } | Auth::Invite { token }
+                        if tokens::token_eq(&token, &self.tokens.host) =>
+                    {
                         self.room.join(now, self.join_request(nickname, JoinRole::Host))
                     }
                     Auth::Invite { token } if tokens::token_eq(&token, &self.invite()) => {
@@ -162,6 +187,7 @@ impl Hub {
                                 participant_id,
                                 ServerMsg::InviteToken { token: self.invite() },
                             );
+                            self.send(participant_id, self.folders_msg());
                         }
                     }
                     Err(code) => {
@@ -179,6 +205,31 @@ impl Hub {
                     ClientMsg::GetLibrary => {
                         let roots = self.media.library.read().expect("library lock").tree();
                         self.send(pid, ServerMsg::Library { roots });
+                    }
+                    ClientMsg::AddMediaFolder { req_id, path, name } => {
+                        let result = self.check_change(pid).and_then(|()| {
+                            let path = std::path::Path::new(&path);
+                            let root =
+                                folders::new_folder(&self.folders.roots, path, name.as_deref())?;
+                            let mut roots = self.folders.roots.clone();
+                            roots.push(root);
+                            Ok(roots)
+                        });
+                        self.change_folders(pid, req_id, result);
+                    }
+                    ClientMsg::RemoveMediaFolder { req_id, name } => {
+                        let result = self.check_change(pid).and_then(|()| {
+                            let mut roots = self.folders.roots.clone();
+                            let before = roots.len();
+                            roots.retain(|r| r.name != name);
+                            if roots.len() == before {
+                                return Err(ErrorCode::MediaFolder {
+                                    problem: MediaFolderProblem::UnknownFolder,
+                                });
+                            }
+                            Ok(roots)
+                        });
+                        self.change_folders(pid, req_id, result);
                     }
                     ClientMsg::RescanLibrary { req_id } => {
                         if self.room.is_host(pid) {
@@ -206,7 +257,11 @@ impl Hub {
                 let effects = self.room.leave(now, pid);
                 self.apply(effects);
             }
-            HubInput::LibraryUpdated(lib) => {
+            HubInput::SetMediaFolders(roots) => self.set_folders(roots),
+            HubInput::LibraryUpdated { generation, library: lib } => {
+                if generation != self.scan_generation {
+                    return;
+                }
                 let infos = lib.file_infos();
                 let roots = lib.tree();
                 *self.media.library.write().expect("library lock") = lib;
@@ -216,6 +271,66 @@ impl Hub {
             }
             HubInput::Shutdown { .. } => unreachable!("handled in run"),
         }
+    }
+
+    /// Hosts may change folders only when the server allows it.
+    fn check_change(&self, pid: ParticipantId) -> Result<(), ErrorCode> {
+        if !self.room.is_host(pid) {
+            return Err(ErrorCode::NotHost);
+        }
+        if !self.folders.editable {
+            return Err(ErrorCode::MediaFolder { problem: MediaFolderProblem::ChangesDisabled });
+        }
+        Ok(())
+    }
+
+    /// Save the new folder list (if there is a config file), then use it.
+    fn change_folders(
+        &mut self,
+        pid: ParticipantId,
+        req_id: sppy_proto::ReqId,
+        roots: Result<Vec<MediaRoot>, ErrorCode>,
+    ) {
+        let saved = roots.and_then(|roots| match &self.folders.config_file {
+            Some(file) => folders::save_media_to_file(file, &roots).map(|()| roots).map_err(|e| {
+                tracing::error!("cannot save {}: {e}", file.display());
+                ErrorCode::MediaFolder { problem: MediaFolderProblem::CannotSave }
+            }),
+            None => Ok(roots),
+        });
+        match saved {
+            Ok(roots) => self.set_folders(roots),
+            Err(code) => {
+                let effects = self.room.denied(pid, req_id, code);
+                self.apply(effects);
+            }
+        }
+    }
+
+    fn set_folders(&mut self, roots: Vec<MediaRoot>) {
+        tracing::info!("shared folders: {:?}", roots.iter().map(|r| &r.name).collect::<Vec<_>>());
+        self.folders.roots = roots;
+        self.spawn_scan();
+        let msg = self.folders_msg();
+        let hosts: Vec<ParticipantId> =
+            self.conns.keys().copied().filter(|pid| self.room.is_host(*pid)).collect();
+        for pid in hosts {
+            self.send(pid, msg.clone());
+        }
+    }
+
+    fn folders_msg(&self) -> ServerMsg {
+        let folders = self
+            .folders
+            .roots
+            .iter()
+            .map(|r| MediaFolder {
+                name: r.name.clone(),
+                path: r.path.to_string_lossy().into_owned(),
+                available: r.path.is_dir(),
+            })
+            .collect();
+        ServerMsg::MediaFolders { folders, editable: self.folders.editable }
     }
 
     /// Keep the `/media` token set equal to the room's sessions.

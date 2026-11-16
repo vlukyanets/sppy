@@ -50,6 +50,15 @@ pub enum UiCommand {
     /// Host: end the current wait even though some participants are not ready.
     StartWithoutWaiting,
     SetMode(DeliveryMode),
+    /// Host: share a folder of the server's machine.
+    AddServerFolder {
+        path: String,
+        name: Option<String>,
+    },
+    /// Host: stop sharing a server folder.
+    RemoveServerFolder {
+        name: String,
+    },
     /// Folders searched for local copies (see [`crate::config::ClientConfig::media_folders`]);
     /// scans them again even when unchanged.
     SetMediaFolders(Vec<std::path::PathBuf>),
@@ -72,6 +81,14 @@ pub enum ConnState {
     Rejected(ErrorCode),
 }
 
+/// The folders a server shares, as its host sees them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerFolders {
+    pub folders: Vec<sppy_proto::MediaFolder>,
+    /// The server lets the host change them.
+    pub editable: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LocalStatus {
     pub mode: DeliveryMode,
@@ -91,6 +108,8 @@ pub struct Snapshot {
     pub progress: HashMap<ParticipantId, ProgressEntry>,
     pub library: Option<Vec<LibraryNode>>,
     pub invite_token: Option<String>,
+    /// Host only: the folders the server shares.
+    pub server_folders: Option<ServerFolders>,
     pub player_open: bool,
     /// The local player's position (extrapolated), once a file is loaded.
     pub player_position_ms: Option<u64>,

@@ -124,6 +124,15 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
         ("RotateInvite", ClientMsg::RotateInvite { req_id: 12 }),
         ("RescanLibrary", ClientMsg::RescanLibrary { req_id: 13 }),
         ("StartWithoutWaiting", ClientMsg::StartWithoutWaiting { req_id: 14 }),
+        (
+            "AddMediaFolder",
+            ClientMsg::AddMediaFolder {
+                req_id: 15,
+                path: "/srv/series".into(),
+                name: Some("Series".into()),
+            },
+        ),
+        ("RemoveMediaFolder", ClientMsg::RemoveMediaFolder { req_id: 16, name: "Series".into() }),
     ]
 }
 
@@ -187,6 +196,24 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
             },
         ),
         ("InviteToken", ServerMsg::InviteToken { token: "tok".into() }),
+        (
+            "MediaFolders",
+            ServerMsg::MediaFolders {
+                folders: vec![MediaFolder {
+                    name: "Movies".into(),
+                    path: "/srv/movies".into(),
+                    available: true,
+                }],
+                editable: true,
+            },
+        ),
+        (
+            "DeniedMediaFolder",
+            ServerMsg::Denied {
+                req_id: 15,
+                code: ErrorCode::MediaFolder { problem: MediaFolderProblem::NotFound },
+            },
+        ),
         ("Closing", ServerMsg::Closing { reason: CloseReason::Kicked }),
     ]
 }

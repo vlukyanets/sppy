@@ -128,6 +128,21 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
     }
 }
 
+/// What to tell the host when a folder change is refused.
+pub fn folder_problem_text(problem: sppy_proto::MediaFolderProblem) -> &'static str {
+    use sppy_proto::MediaFolderProblem::*;
+    match problem {
+        ChangesDisabled => "This server does not allow changing its folders from the app",
+        NotAbsolute => "Enter the full path of a folder on the server",
+        NotFound => "There is no such folder on the server",
+        NotAFolder => "That path is a file, not a folder",
+        AlreadyShared => "That folder is already shared",
+        NameTaken => "Another shared folder has that name",
+        UnknownFolder => "No shared folder with that name",
+        CannotSave => "The server could not save its config file; see the server log",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sppy_proto::*;

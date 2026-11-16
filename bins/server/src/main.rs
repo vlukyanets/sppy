@@ -65,7 +65,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Run => {
             let config_path = cli.config.unwrap_or_else(paths::default_config_path);
             let config = load_config(&config_path)?;
-            let handle = sppy_server::start(config, data_dir).await?;
+            // Folders the host adds or removes from the app are saved into this file.
+            let options = sppy_server::StartOptions { config_file: Some(config_path) };
+            let handle = sppy_server::start_with(config, data_dir, options).await?;
             tokio::signal::ctrl_c().await.context("cannot wait for Ctrl-C")?;
             tracing::info!("shutting down");
             handle.shutdown().await;
