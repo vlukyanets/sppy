@@ -71,7 +71,7 @@ impl Default for ClientConfig {
             local_media: Vec::new(),
             subtitle_languages: Vec::new(),
             cache_dir: None,
-            cache_limit_gb: 30,
+            cache_limit_gb: 20,
             servers: Vec::new(),
             player: PlayerConfig::default(),
             advanced: SyncParams::default(),
@@ -218,7 +218,7 @@ mod tests {
         let c = ClientConfig::default();
         assert_eq!(c.mode, DeliveryMode::Stream);
         assert!(c.prefetch_next);
-        assert_eq!(c.cache_limit_gb, 30);
+        assert_eq!(c.cache_limit_gb, 20);
         assert_eq!(c.player.kind, "mpv");
         assert_eq!(c.player.path, std::path::PathBuf::from("mpv"));
         assert_eq!(c.advanced, sppy_sync::SyncParams::default());
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(c.mode, DeliveryMode::Preload);
         assert_eq!(c.advanced.seek_threshold_ms, 2000);
         assert_eq!(c.advanced.dead_band_ms, 80);
-        assert_eq!(c.cache_limit_gb, 30);
+        assert_eq!(c.cache_limit_gb, 20);
     }
 
     #[test]
