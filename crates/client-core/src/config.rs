@@ -156,7 +156,17 @@ impl ClientConfig {
         strip_defaults(&mut table, &defaults);
         let text = toml::to_string_pretty(&table).expect("a toml table always serializes");
         let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, text).map_err(io)?;
+        // Saved links may carry the host token: readable by this user only.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let _ = std::fs::remove_file(&tmp);
+        std::io::Write::write_all(&mut options.open(&tmp).map_err(io)?, text.as_bytes())
+            .map_err(io)?;
         std::fs::rename(&tmp, path).map_err(io)
     }
 }
@@ -240,6 +250,20 @@ mod tests {
         assert_eq!(got, [("Films", movies), ("Extra", extra), ("Unplugged", gone)]);
         c.save(&file).unwrap();
         assert!(!std::fs::read_to_string(&file).unwrap().contains("local_media"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_is_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("client.toml");
+        std::fs::write(&file, "nickname = \"old\"\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let c = ClientConfig { nickname: "bob".into(), ..ClientConfig::default() };
+        c.save(&file).unwrap();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "saved links may carry the host token");
     }
 
     #[test]
