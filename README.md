@@ -29,7 +29,8 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
 1. Run `sppy`, enter a nickname, open ⚙ Settings → *Hosting* and add a media folder.
    Save, then click **Become host**.
 2. Click **Copy invite link** and send it to your friends (`sppy://host:8740/<token>`).
-   Set *Public address* in Settings (e.g. your Tailscale name) so the link points to it.
+   The list next to it picks the address in the link: one of this computer's
+   addresses (LAN, VPN such as Tailscale) or the *Public address* from Settings.
 3. Friends paste the link into **Invite link**, enter a nickname and click **Connect**.
 4. Add files from **Library** (or a URL) and press **Play**. Pause and seek either in the
    window or directly in mpv — everyone follows.

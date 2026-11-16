@@ -30,6 +30,26 @@ fn mode_switch(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     }
 }
 
+/// Which address of this computer goes into the invite link.
+fn invite_host_choice(app: &mut SppyApp, ui: &mut egui::Ui) {
+    let (options, chosen) = app.invite_hosts();
+    let Some(current) = options.get(chosen) else { return };
+    let mut picked = chosen;
+    egui::ComboBox::from_id_salt("invite-host")
+        .selected_text(current.label())
+        .show_ui(ui, |ui| {
+            for (i, o) in options.iter().enumerate() {
+                ui.selectable_value(&mut picked, i, o.label());
+            }
+        })
+        .response
+        .on_hover_text("Address put into the invite link: pick the one others can reach");
+    if picked != chosen {
+        app.config.invite_host = Some(options[picked].key());
+        app.save_config();
+    }
+}
+
 pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let online = matches!(snap.connection, ConnState::Connected | ConnState::Reconnecting { .. });
     ui.add_space(4.0);
@@ -44,6 +64,7 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
             ui.separator();
             if let Some(host) = &app.host {
                 ui.label(format!("Hosting on port {}", host.local_addr.port()));
+                invite_host_choice(app, ui);
                 if let Some(link) = snap.invite_token.as_deref().and_then(|t| app.invite_link(t))
                     && ui.button("Copy invite link").on_hover_text(&link).clicked()
                 {

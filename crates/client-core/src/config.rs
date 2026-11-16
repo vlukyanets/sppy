@@ -50,6 +50,9 @@ pub struct ClientConfig {
     pub advanced: SyncParams,
     /// Embedded server ("Become host").
     pub host: ServerConfig,
+    /// Host put in invite links: a local IP or the public address (unset = best guess).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_host: Option<String>,
     /// Undocumented: pauses between download attempts (empty = defaults); tests shorten it.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -70,6 +73,7 @@ impl Default for ClientConfig {
             player: PlayerConfig::default(),
             advanced: SyncParams::default(),
             host: ServerConfig::default(),
+            invite_host: None,
             download_backoff_ms: Vec::new(),
         }
     }

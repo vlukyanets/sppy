@@ -1,7 +1,10 @@
 //! Application state and the top-level layout.
 
 use sppy_client_core::api::{ClientHandle, Snapshot, UiCommand, UiEvent};
+use std::time::{Duration, Instant};
+
 use sppy_client_core::config::{ClientConfig, ClientPaths, SavedServer};
+use sppy_client_core::netaddr::{self, InviteHost, LocalIp};
 use sppy_player::mpv::{MpvConfig, MpvLauncher};
 use sppy_server::ServerHandle;
 use tokio::runtime::Runtime;
@@ -12,6 +15,7 @@ pub use crate::log::LogKind;
 use crate::ui;
 
 const LOG_LINES: usize = 300;
+const LOCAL_IPS_REFRESH: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -39,6 +43,9 @@ pub struct UiState {
     pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
     /// The player could not start (shown as a banner with a Settings button).
     pub player_problem: Option<String>,
+    /// This machine's addresses for invite links, refreshed while hosting.
+    pub local_ips: Vec<LocalIp>,
+    local_ips_at: Option<Instant>,
 }
 
 pub struct SppyApp {
@@ -95,6 +102,8 @@ impl SppyApp {
             subtitle_languages: config.subtitle_languages.join(", "),
             confirm_kick: None,
             player_problem: None,
+            local_ips: Vec::new(),
+            local_ips_at: None,
         };
         let events = handle.subscribe_events();
         SppyApp { rt, handle, launcher, config, paths, ui, events, host: None, host_starting: None }
@@ -179,15 +188,32 @@ impl SppyApp {
         }
     }
 
+    /// Hosts the invite link can use, and the index of the chosen one.
+    pub fn invite_hosts(&self) -> (Vec<InviteHost>, usize) {
+        let options =
+            netaddr::invite_options(self.config.host.public_address.as_deref(), &self.ui.local_ips);
+        let chosen = netaddr::pick_option(&options, self.config.invite_host.as_deref());
+        (options, chosen)
+    }
+
     /// Invite link for the embedded server.
     pub fn invite_link(&self, token: &str) -> Option<String> {
         let port = self.host.as_ref()?.local_addr.port();
-        Some(sppy_client_core::netaddr::invite_link(
-            self.config.host.public_address.as_deref(),
-            port,
-            token,
-            sppy_client_core::netaddr::first_non_loopback_ip(),
-        ))
+        let (options, chosen) = self.invite_hosts();
+        Some(match options.get(chosen) {
+            Some(host) => host.link(port, token),
+            None => netaddr::invite_link(None, port, token, None),
+        })
+    }
+
+    /// Re-read the local addresses now and then: Wi-Fi or a VPN may come and go.
+    fn refresh_local_ips(&mut self) {
+        let Some(host) = &self.host else { return };
+        if self.ui.local_ips_at.is_some_and(|t| t.elapsed() < LOCAL_IPS_REFRESH) {
+            return;
+        }
+        self.ui.local_ips = netaddr::local_candidates(host.local_addr);
+        self.ui.local_ips_at = Some(Instant::now());
     }
 
     fn drain_events(&mut self) {
@@ -213,8 +239,9 @@ impl eframe::App for SppyApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
         self.poll_host();
+        self.refresh_local_ips();
         if self.host_starting.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
