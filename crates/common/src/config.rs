@@ -27,6 +27,10 @@ pub struct ServerConfig {
     pub media: Vec<MediaRoot>,
     /// Let the host add and remove shared folders from the app (saved into this file).
     pub allow_remote_media_changes: bool,
+    /// Undocumented; tests delay the background fingerprint pass with it.
+    #[doc(hidden)]
+    #[serde(skip_serializing_if = "is_zero")]
+    pub hash_delay_ms: u64,
     /// Undocumented; tests shorten it.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "is_default_ping_timeout")]
@@ -34,6 +38,10 @@ pub struct ServerConfig {
 }
 
 const DEFAULT_PING_TIMEOUT_MS: u64 = 10_000;
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
 
 fn is_default_ping_timeout(v: &u64) -> bool {
     *v == DEFAULT_PING_TIMEOUT_MS
@@ -50,6 +58,7 @@ impl Default for ServerConfig {
             resume_buffer_secs: 10,
             media: Vec::new(),
             allow_remote_media_changes: true,
+            hash_delay_ms: 0,
             ping_timeout_ms: DEFAULT_PING_TIMEOUT_MS,
         }
     }

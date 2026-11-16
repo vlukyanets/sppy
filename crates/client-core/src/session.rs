@@ -52,6 +52,8 @@ struct MediaState {
     local: bool,
     /// Waiting for a preload download of this item.
     downloading: bool,
+    /// Waiting to learn whether a local copy exists, since this local time.
+    identifying_since: Option<u64>,
     /// How the loaded item arrives (re-sent with the drift once per second).
     delivery: Option<Delivery>,
     last_drift_report_ms: u64,
@@ -78,6 +80,7 @@ impl Default for MediaState {
             cache_eof: false,
             local: false,
             downloading: false,
+            identifying_since: None,
             delivery: None,
             last_drift_report_ms: 0,
             token: None,
@@ -602,14 +605,33 @@ impl<L: PlayerLauncher> Session<L> {
         self.index.index.lock().expect("local index").find(fp)
     }
 
-    /// While we are still downloading the current item, switch to a local copy if one appears
-    /// (the fingerprint arrived later, or the folder scan finished).
+    /// Whether to hold off downloading or streaming `item`: my folders may have it, but the
+    /// item's fingerprint or the folder scan is still missing. Gives up after a while.
+    fn may_have_locally(&self, item: &Item) -> bool {
+        let Source::File { .. } = item.source else { return false };
+        let unknown = item.fingerprint.is_none() || self.snap.local.indexed_files.is_none();
+        let have_files = self.snap.local.indexed_files != Some(0);
+        let started = match self.media.identifying_since {
+            Some(t) if self.media.item == Some(item.item_id) => t,
+            _ => self.local_ms(),
+        };
+        let waited = self.local_ms().saturating_sub(started);
+        unknown && have_files && waited < self.config.identify_wait_ms
+    }
+
+    /// While the current item is still downloading or being identified, take a local copy
+    /// as soon as one is known (the fingerprint arrived, or the folder scan finished); when
+    /// identifying ends without one, download or stream as usual.
     async fn recheck_local(&mut self) {
-        if !self.media.downloading {
+        let Some(item) = self.media.item.and_then(|id| self.item(id)) else { return };
+        if self.media.identifying_since.is_some() {
+            match self.resolve(&item) {
+                Some(Resolved::Identify) | None => {}
+                Some(resolved) => self.start_item(item.item_id, resolved).await,
+            }
             return;
         }
-        let Some(item) = self.media.item.and_then(|id| self.item(id)) else { return };
-        if self.local_copy(&item).is_none() {
+        if !self.media.downloading || self.local_copy(&item).is_none() {
             return;
         }
         if let Source::File { file_id } = &item.source {
@@ -699,6 +721,7 @@ impl<L: PlayerLauncher> Session<L> {
         if let Source::File { file_id } = &next.source
             && self.cache.complete(file_id).is_none()
             && self.local_copy(&next).is_none()
+            && !(next.fingerprint.is_none() && self.snap.local.indexed_files != Some(0))
             && let Some(job) = self.download_job(&next, file_id)
         {
             self.downloader.enqueue(job, Priority::Prefetch);
@@ -722,6 +745,9 @@ impl<L: PlayerLauncher> Session<L> {
                 path,
                 subtitles: self.subtitle_sources(item, base, token),
             });
+        }
+        if self.may_have_locally(item) {
+            return Some(Resolved::Identify);
         }
         if let Source::File { file_id } = &item.source {
             // Spec §7.1: local copy, then a completed cache entry, then the delivery mode.
@@ -796,6 +822,19 @@ impl<L: PlayerLauncher> Session<L> {
                 self.media = MediaState { item: Some(id), ..MediaState::default() };
                 self.emit(UiEvent::Error(reason.clone()));
                 self.set_status_forced(MediaStatus::Failed { message: reason });
+                return;
+            }
+            Resolved::Identify => {
+                let since = match self.media.identifying_since {
+                    Some(t) if self.media.item == Some(id) => t,
+                    _ => self.local_ms(),
+                };
+                self.media = MediaState {
+                    item: Some(id),
+                    identifying_since: Some(since),
+                    ..MediaState::default()
+                };
+                self.send_status();
                 return;
             }
             Resolved::Wait => {
@@ -1117,6 +1156,10 @@ impl<L: PlayerLauncher> Session<L> {
     // ---- sync tick ---------------------------------------------------------------------------
 
     async fn on_tick(&mut self) {
+        if self.media.identifying_since.is_some() {
+            // Gives up waiting for the fingerprint once the time is up.
+            self.recheck_local().await;
+        }
         let now = self.local_ms();
         if self.awaiting.is_some_and(|(_, deadline)| now > deadline) {
             self.awaiting = None;

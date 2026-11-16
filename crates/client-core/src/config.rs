@@ -33,6 +33,12 @@ impl Default for PlayerConfig {
     }
 }
 
+const DEFAULT_IDENTIFY_WAIT_MS: u64 = 10_000;
+
+fn is_default_identify_wait(v: &u64) -> bool {
+    *v == DEFAULT_IDENTIFY_WAIT_MS
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClientConfig {
@@ -56,6 +62,11 @@ pub struct ClientConfig {
     /// Host put in invite links: a local IP or the public address (unset = best guess).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invite_host: Option<String>,
+    /// Undocumented: how long to wait for an item's fingerprint before downloading or
+    /// streaming it (a local copy may turn up); tests shorten it.
+    #[doc(hidden)]
+    #[serde(skip_serializing_if = "is_default_identify_wait")]
+    pub identify_wait_ms: u64,
     /// Undocumented: pauses between download attempts (empty = defaults); tests shorten it.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -77,6 +88,7 @@ impl Default for ClientConfig {
             advanced: SyncParams::default(),
             host: ServerConfig::default(),
             invite_host: None,
+            identify_wait_ms: DEFAULT_IDENTIFY_WAIT_MS,
             download_backoff_ms: Vec::new(),
         }
     }

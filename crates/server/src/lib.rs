@@ -123,6 +123,7 @@ pub async fn start_with(
             roots: config.media.clone(),
             editable: config.allow_remote_media_changes,
             config_file: options.config_file,
+            hash_delay_ms: config.hash_delay_ms,
         },
         hub_tx.clone(),
     );

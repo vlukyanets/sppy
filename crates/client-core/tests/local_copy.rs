@@ -192,3 +192,65 @@ async fn rescan_finds_files_added_later() {
     eventually("rescanned", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
     server.shutdown().await;
 }
+
+/// The server hashes its library in the background: an item may arrive before its
+/// fingerprint. A client with media folders must not start downloading meanwhile.
+#[tokio::test]
+async fn waits_for_the_fingerprint_before_downloading() {
+    let (dir, media, cache, mine) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let copy = mine.path().join("renamed.mkv");
+    std::fs::write(&copy, movie_bytes()).unwrap();
+    std::fs::write(media.path().join("Movie.mkv"), movie_bytes()).unwrap();
+    let server_cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        hash_delay_ms: 1500,
+        ..test_config()
+    };
+    let server = start_server(dir.path(), server_cfg).await;
+    let h = host_with(&server, FakeConfig::default(), cfg(cache.path(), mine.path())).await;
+    eventually("folder indexed", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie() }]));
+    eventually("local copy loaded", 5, || loaded_paths(&h).contains(&copy)).await;
+    assert!(!cache.path().join("media").join(&movie().0).exists(), "nothing was downloaded");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn gives_up_waiting_for_the_fingerprint_and_streams() {
+    let (dir, media, cache, mine) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    std::fs::write(mine.path().join("unrelated.mkv"), b"something else").unwrap();
+    std::fs::write(media.path().join("Movie.mkv"), movie_bytes()).unwrap();
+    let server_cfg = ServerConfig {
+        media: vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }],
+        hash_delay_ms: 60_000,
+        ..test_config()
+    };
+    let server = start_server(dir.path(), server_cfg).await;
+    let config = ClientConfig {
+        mode: DeliveryMode::Stream,
+        identify_wait_ms: 300,
+        ..cfg(cache.path(), mine.path())
+    };
+    let h = host_with(&server, FakeConfig::default(), config).await;
+    eventually("folder indexed", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie() }]));
+    let streamed = || {
+        h.launcher.remote().is_some_and(|r| {
+            r.commands()
+                .iter()
+                .any(|c| matches!(c, FakeCmd::Load(MediaSource::Url(u)) if u.contains("/media/")))
+        })
+    };
+    eventually("streamed after waiting", 5, streamed).await;
+    server.shutdown().await;
+}

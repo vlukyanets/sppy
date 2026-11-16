@@ -13,6 +13,9 @@ pub enum Resolved {
     Local { path: PathBuf, subtitles: Vec<MediaSource> },
     /// Not playable yet (waiting for a download).
     Wait,
+    /// Not decided yet: a local copy may exist, but the item's fingerprint (or the scan of
+    /// my folders) is still missing.
+    Identify,
     /// Refused to open (e.g. not an http(s) URL).
     Rejected { reason: String },
 }

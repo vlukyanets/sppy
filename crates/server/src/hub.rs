@@ -63,6 +63,8 @@ pub struct Folders {
     pub editable: bool,
     /// Where changes made by the host are saved.
     pub config_file: Option<PathBuf>,
+    /// Tests: wait this long before hashing.
+    pub hash_delay_ms: u64,
 }
 
 /// Tokens shared between the hub and the server handle.
@@ -119,7 +121,9 @@ impl Hub {
         let roots = self.folders.roots.clone();
         let data_dir = self.data_dir.clone();
         let tx = self.self_tx.clone();
+        let delay = Duration::from_millis(self.folders.hash_delay_ms);
         tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
             match tokio::task::spawn_blocking(move || scan_with_fingerprints(&roots, &data_dir))
                 .await
             {
