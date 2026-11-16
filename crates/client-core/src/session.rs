@@ -113,9 +113,8 @@ pub(crate) struct Session<L: PlayerLauncher> {
     stream_fallback: std::collections::HashSet<ItemId>,
     cache: MediaCache,
     http: reqwest::Client,
-    local_index: std::sync::Arc<std::sync::Mutex<LocalIndex>>,
-    /// Signals that a (re)scan of my media folders finished.
-    index_rx: mpsc::UnboundedReceiver<()>,
+    /// Local copies in my media folders and the host's library.
+    index: IndexTask,
     /// Files chosen by hand per item.
     overrides: std::collections::HashMap<ItemId, std::path::PathBuf>,
     /// The user closed the player: do not reopen it on reconnect.
@@ -151,9 +150,7 @@ impl<L: PlayerLauncher> Session<L> {
             config.media_cache_dir(),
             config.cache_limit_gb.saturating_mul(1 << 30),
         );
-        let local_index = std::sync::Arc::new(std::sync::Mutex::new(LocalIndex::default()));
-        let (index_tx, index_rx) = mpsc::unbounded_channel();
-        spawn_local_index(local_index.clone(), config.local_media.clone(), index_tx);
+        let index = IndexTask::start(config.media_folders());
         let client = reqwest::Client::new();
         let http = client.clone();
         let (downloader, dl_rx) = if config.download_backoff_ms.is_empty() {
@@ -187,8 +184,7 @@ impl<L: PlayerLauncher> Session<L> {
             stream_fallback: Default::default(),
             cache,
             http,
-            local_index,
-            index_rx,
+            index,
             overrides: Default::default(),
             player_closed_by_user: false,
         }
@@ -206,7 +202,10 @@ impl<L: PlayerLauncher> Session<L> {
                 ev = next_conn_event(&mut self.conn) => self.on_conn_event(ev).await,
                 ev = next_player_event(&mut self.player) => self.on_player_event(ev).await,
                 ev = self.dl_rx.recv() => if let Some(ev) = ev { self.on_download_event(ev).await },
-                Some(()) = self.index_rx.recv() => self.recheck_local().await,
+                Some(n) = self.index.rx.recv() => {
+                    self.snap.local.indexed_files = Some(n);
+                    self.recheck_local().await;
+                }
                 _ = tick.tick() => self.on_tick().await,
             }
             self.publish();
@@ -339,6 +338,10 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::SetMode(mode) => {
                 self.config.mode = mode;
                 self.snap.local.mode = mode;
+            }
+            UiCommand::SetMediaFolders(folders) => {
+                self.index = IndexTask::start(folders);
+                self.snap.local.indexed_files = None;
             }
             UiCommand::ClearCache => {
                 if let Err(e) = self.cache.clear(&self.protected_files()) {
@@ -580,7 +583,7 @@ impl<L: PlayerLauncher> Session<L> {
             return None;
         }
         let fp = item.fingerprint.as_ref()?;
-        self.local_index.lock().expect("local index").find(fp)
+        self.index.index.lock().expect("local index").find(fp)
     }
 
     /// While we are still downloading the current item, switch to a local copy if one appears
@@ -1168,31 +1171,48 @@ impl<L: PlayerLauncher> Session<L> {
     }
 }
 
-/// Build the local index in the background, then refresh it every 10 minutes.
-fn spawn_local_index(
+/// The local index, built in the background and refreshed every 10 minutes.
+/// Replacing it (new folders) aborts the old task; a scan still running then fills an
+/// index nobody reads any more.
+struct IndexTask {
     index: std::sync::Arc<std::sync::Mutex<LocalIndex>>,
-    roots: Vec<std::path::PathBuf>,
-    done: mpsc::UnboundedSender<()>,
-) {
-    if roots.is_empty() {
-        return;
-    }
-    tokio::spawn(async move {
-        loop {
-            let (idx, r) = (index.clone(), roots.clone());
-            let scanned = tokio::task::spawn_blocking(move || {
-                let mut fresh = LocalIndex::default();
-                std::mem::swap(&mut fresh, &mut *idx.lock().expect("local index"));
-                fresh.rescan(&r);
-                *idx.lock().expect("local index") = fresh;
-            })
-            .await;
-            if scanned.is_err() || done.send(()).is_err() {
-                return;
+    /// Number of files after each scan.
+    rx: mpsc::UnboundedReceiver<usize>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl IndexTask {
+    fn start(roots: Vec<std::path::PathBuf>) -> IndexTask {
+        let index = std::sync::Arc::new(std::sync::Mutex::new(LocalIndex::default()));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let idx = index.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (idx, r) = (idx.clone(), roots.clone());
+                let scanned = tokio::task::spawn_blocking(move || {
+                    // Lookups keep using the old index while the new one is built.
+                    let known = idx.lock().expect("local index").take_fingerprints();
+                    let fresh = LocalIndex::scan(&r).with_fingerprints(known);
+                    let n = fresh.len();
+                    *idx.lock().expect("local index") = fresh;
+                    n
+                })
+                .await;
+                let Ok(n) = scanned else { return };
+                if tx.send(n).is_err() || roots.is_empty() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(600)).await;
             }
-            tokio::time::sleep(Duration::from_secs(600)).await;
-        }
-    });
+        });
+        IndexTask { index, rx, task }
+    }
+}
+
+impl Drop for IndexTask {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 async fn fetch_to_file(

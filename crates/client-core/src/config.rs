@@ -89,6 +89,17 @@ pub enum ConfigError {
 
 impl ClientConfig {
     /// Where downloaded media is kept.
+    /// Folders searched for local copies: "my media folders" and the host's library.
+    pub fn media_folders(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for p in self.local_media.iter().chain(self.host.media.iter().map(|r| &r.path)) {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
+
     pub fn media_cache_dir(&self) -> PathBuf {
         self.cache_dir.clone().unwrap_or_else(|| client_paths().cache_dir).join("media")
     }

@@ -97,8 +97,8 @@ impl InviteHost {
     }
 }
 
-/// Addresses of this machine a server listening on `listen` can be reached at, best guess first.
-pub fn local_candidates(listen: SocketAddr) -> Vec<LocalIp> {
+/// Usable addresses of this machine (see [`rank_candidates`]), best guess first.
+pub fn local_ips() -> Vec<LocalIp> {
     use if_addrs::IfOperStatus;
     let ips = if_addrs::get_if_addrs()
         .unwrap_or_default()
@@ -111,32 +111,24 @@ pub fn local_candidates(listen: SocketAddr) -> Vec<LocalIp> {
         })
         .map(|i| LocalIp { ip: i.ip(), interface: i.name })
         .collect();
-    rank_candidates(ips, listen, first_non_loopback_ip())
+    let any = SocketAddr::new(std::net::Ipv6Addr::UNSPECIFIED.into(), 0);
+    rank_candidates(ips, any, first_non_loopback_ip())
 }
 
-/// Drop addresses the listener does not accept or a link cannot carry, then order them:
+/// Drop addresses a link cannot carry (link-local, multicast) and order the rest:
 /// the default-route address, private and VPN IPv4, other IPv4, global IPv6,
-/// unique-local IPv6, loopback last.
+/// unique-local IPv6, loopback last. Then keep what `listen` accepts ([`reachable_via`]).
 pub fn rank_candidates(
     ips: Vec<LocalIp>,
     listen: SocketAddr,
     default_route: Option<IpAddr>,
 ) -> Vec<LocalIp> {
-    let bound = listen.ip();
     let mut out: Vec<LocalIp> = Vec::new();
-    if !bound.is_unspecified() {
-        let interface = ips.into_iter().find(|l| l.ip == bound).map(|l| l.interface);
-        return vec![LocalIp { ip: bound, interface: interface.unwrap_or_default() }];
-    }
     for l in ips {
         let usable = match l.ip {
             IpAddr::V4(ip) => !ip.is_unspecified() && !ip.is_link_local() && !ip.is_multicast(),
-            // A `0.0.0.0` listener does not accept IPv6.
             IpAddr::V6(ip) => {
-                bound.is_ipv6()
-                    && !ip.is_unspecified()
-                    && !ip.is_multicast()
-                    && !ip.is_unicast_link_local()
+                !ip.is_unspecified() && !ip.is_multicast() && !ip.is_unicast_link_local()
             }
         };
         if usable && !out.iter().any(|o| o.ip == l.ip) {
@@ -154,6 +146,34 @@ pub fn rank_candidates(
         IpAddr::V6(_) => 3,
     };
     out.sort_by_key(|l| (Some(l.ip) != default_route, class(&l.ip)));
+    reachable_via(&out, listen)
+}
+
+/// The addresses a server listening on `listen` accepts, in the given order.
+pub fn reachable_via(ips: &[LocalIp], listen: SocketAddr) -> Vec<LocalIp> {
+    let bound = listen.ip();
+    if !bound.is_unspecified() {
+        let interface = ips.iter().find(|l| l.ip == bound).map(|l| l.interface.clone());
+        return vec![LocalIp { ip: bound, interface: interface.unwrap_or_default() }];
+    }
+    // A `0.0.0.0` listener does not accept IPv6.
+    ips.iter().filter(|l| bound.is_ipv6() || l.ip.is_ipv4()).cloned().collect()
+}
+
+/// Addresses the embedded server may listen on: all IPv4 addresses (`0.0.0.0`), each local
+/// address, and the configured one even if it is gone. `(address, label)`.
+pub fn listen_options(local: &[LocalIp], current: IpAddr) -> Vec<(IpAddr, String)> {
+    let all: IpAddr = std::net::Ipv4Addr::UNSPECIFIED.into();
+    let mut out = vec![(all, "All addresses (0.0.0.0)".to_owned())];
+    out.extend(local.iter().map(|l| (l.ip, InviteHost::Local(l.clone()).label())));
+    if !out.iter().any(|(ip, _)| *ip == current) {
+        let label = if current.is_unspecified() {
+            format!("All addresses ({current})")
+        } else {
+            format!("{current} (not found on this computer)")
+        };
+        out.push((current, label));
+    }
     out
 }
 
@@ -317,6 +337,23 @@ mod choice_tests {
         assert_eq!(pick_option(&opts, Some("127.0.0.1")), 2);
         assert_eq!(pick_option(&opts, Some("10.1.1.1")), 0, "a vanished address falls back");
         assert_eq!(invite_options(Some(""), &local).len(), 2);
+    }
+
+    #[test]
+    fn listen_options_start_with_all_and_keep_the_current_one() {
+        let local = vec![l("192.168.1.5", "wlan0"), l("127.0.0.1", "lo")];
+        let any: IpAddr = "0.0.0.0".parse().unwrap();
+        let opts = listen_options(&local, any);
+        let labels: Vec<_> = opts.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["All addresses (0.0.0.0)", "192.168.1.5 (wlan0)", "127.0.0.1 (this computer only)"]
+        );
+        let gone: IpAddr = "10.9.9.9".parse().unwrap();
+        let opts = listen_options(&local, gone);
+        assert_eq!(opts.last().unwrap(), &(gone, "10.9.9.9 (not found on this computer)".into()));
+        let v6any: IpAddr = "::".parse().unwrap();
+        assert_eq!(listen_options(&local, v6any).last().unwrap().1, "All addresses (::)");
     }
 
     #[test]

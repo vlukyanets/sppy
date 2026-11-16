@@ -43,9 +43,11 @@ pub struct UiState {
     pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
     /// The player could not start (shown as a banner with a Settings button).
     pub player_problem: Option<String>,
-    /// This machine's addresses for invite links, refreshed while hosting.
+    /// This machine's addresses, refreshed while hosting or in the settings.
     pub local_ips: Vec<LocalIp>,
     local_ips_at: Option<Instant>,
+    /// Folders the core searches for local copies, as last sent to it.
+    pub media_folders: Vec<std::path::PathBuf>,
 }
 
 pub struct SppyApp {
@@ -104,6 +106,7 @@ impl SppyApp {
             player_problem: None,
             local_ips: Vec::new(),
             local_ips_at: None,
+            media_folders: config.media_folders(),
         };
         let events = handle.subscribe_events();
         SppyApp { rt, handle, launcher, config, paths, ui, events, host: None, host_starting: None }
@@ -190,8 +193,12 @@ impl SppyApp {
 
     /// Hosts the invite link can use, and the index of the chosen one.
     pub fn invite_hosts(&self) -> (Vec<InviteHost>, usize) {
+        let reachable = match &self.host {
+            Some(host) => netaddr::reachable_via(&self.ui.local_ips, host.local_addr),
+            None => Vec::new(),
+        };
         let options =
-            netaddr::invite_options(self.config.host.public_address.as_deref(), &self.ui.local_ips);
+            netaddr::invite_options(self.config.host.public_address.as_deref(), &reachable);
         let chosen = netaddr::pick_option(&options, self.config.invite_host.as_deref());
         (options, chosen)
     }
@@ -208,12 +215,21 @@ impl SppyApp {
 
     /// Re-read the local addresses now and then: Wi-Fi or a VPN may come and go.
     fn refresh_local_ips(&mut self) {
-        let Some(host) = &self.host else { return };
-        if self.ui.local_ips_at.is_some_and(|t| t.elapsed() < LOCAL_IPS_REFRESH) {
+        let needed = self.host.is_some() || self.ui.settings_open;
+        if !needed || self.ui.local_ips_at.is_some_and(|t| t.elapsed() < LOCAL_IPS_REFRESH) {
             return;
         }
-        self.ui.local_ips = netaddr::local_candidates(host.local_addr);
+        self.ui.local_ips = netaddr::local_ips();
         self.ui.local_ips_at = Some(Instant::now());
+    }
+
+    /// Tell the core about changed media folders (it rescans them).
+    pub fn apply_media_folders(&mut self) {
+        let folders = self.config.media_folders();
+        if folders != self.ui.media_folders {
+            self.ui.media_folders = folders.clone();
+            self.send(UiCommand::SetMediaFolders(folders));
+        }
     }
 
     fn drain_events(&mut self) {

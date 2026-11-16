@@ -50,6 +50,8 @@ pub enum UiCommand {
     /// Host: end the current wait even though some participants are not ready.
     StartWithoutWaiting,
     SetMode(DeliveryMode),
+    /// Folders searched for local copies (see [`crate::config::ClientConfig::media_folders`]).
+    SetMediaFolders(Vec<std::path::PathBuf>),
     ChooseLocalFile {
         item_id: ItemId,
         path: PathBuf,
@@ -73,6 +75,8 @@ pub enum ConnState {
 pub struct LocalStatus {
     pub mode: DeliveryMode,
     pub cache_used_bytes: u64,
+    /// Video files found in the media folders; `None` while scanning.
+    pub indexed_files: Option<usize>,
 }
 
 /// Everything the UI needs to draw.

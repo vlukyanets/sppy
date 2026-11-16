@@ -10,10 +10,14 @@ use sppy_proto::Fingerprint;
 
 const MAX_DEPTH: usize = 32;
 
+/// Fingerprints already computed, keyed by path, size and mtime.
+#[derive(Debug, Default)]
+pub struct KnownFingerprints(HashMap<(PathBuf, u64, SystemTime), Fingerprint>);
+
 #[derive(Debug, Default)]
 pub struct LocalIndex {
     by_size: HashMap<u64, Vec<(PathBuf, SystemTime)>>,
-    fp_cache: HashMap<(PathBuf, u64, SystemTime), Fingerprint>,
+    fp_cache: KnownFingerprints,
 }
 
 impl LocalIndex {
@@ -27,11 +31,15 @@ impl LocalIndex {
         idx
     }
 
-    /// Rescan, keeping fingerprints of unchanged files.
-    pub fn rescan(&mut self, roots: &[PathBuf]) {
-        let fp_cache = std::mem::take(&mut self.fp_cache);
-        *self = LocalIndex::scan(roots);
-        self.fp_cache = fp_cache;
+    /// Hand the computed fingerprints over to a fresh scan (see [`Self::with_fingerprints`]).
+    pub fn take_fingerprints(&mut self) -> KnownFingerprints {
+        std::mem::take(&mut self.fp_cache)
+    }
+
+    /// Reuse fingerprints of files that did not change since they were computed.
+    pub fn with_fingerprints(mut self, known: KnownFingerprints) -> Self {
+        self.fp_cache = known;
+        self
     }
 
     fn walk(&mut self, dir: &Path, depth: usize, visited: &mut std::collections::HashSet<PathBuf>) {
@@ -70,11 +78,11 @@ impl LocalIndex {
         let candidates = self.by_size.get(&fp.size)?.clone();
         for (path, mtime) in candidates {
             let key = (path.clone(), fp.size, mtime);
-            let local = match self.fp_cache.get(&key) {
+            let local = match self.fp_cache.0.get(&key) {
                 Some(f) => f.clone(),
                 None => match fingerprint(&path) {
                     Ok(f) => {
-                        self.fp_cache.insert(key, f.clone());
+                        self.fp_cache.0.insert(key, f.clone());
                         f
                     }
                     Err(e) => {

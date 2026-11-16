@@ -109,3 +109,43 @@ async fn chosen_file_that_does_not_match_warns_but_plays() {
     assert!(warned);
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn host_library_folders_count_as_local_copies() {
+    let (dir, media, cache) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let server = media_server(dir.path(), media.path()).await;
+    let mut config = cfg(cache.path(), Path::new("/nonexistent"));
+    config.local_media.clear();
+    config.host.media = vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }];
+    let h = host_with(&server, FakeConfig::default(), config).await;
+    eventually("folders indexed", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie() }]));
+    let original = media.path().join("Movie.mkv");
+    eventually("library file loaded", 5, || loaded_paths(&h).contains(&original)).await;
+    assert!(!cache.path().join("media").join(&movie().0).exists(), "nothing was downloaded");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn media_folders_changed_at_runtime_are_used() {
+    let (dir, media, cache, mine) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let copy = mine.path().join("renamed.mkv");
+    std::fs::write(&copy, movie_bytes()).unwrap();
+    let server = media_server(dir.path(), media.path()).await;
+    let mut config = cfg(cache.path(), mine.path());
+    config.local_media.clear();
+    let h = host_with(&server, FakeConfig::default(), config).await;
+    eventually("nothing indexed", 5, || snap(&h.handle).local.indexed_files == Some(0)).await;
+    h.send(UiCommand::SetMediaFolders(vec![mine.path().to_path_buf()]));
+    eventually("new folder indexed", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
+    h.send(UiCommand::PlaylistAdd(vec![Source::File { file_id: movie() }]));
+    eventually("local copy loaded", 5, || loaded_paths(&h).contains(&copy)).await;
+    assert!(!cache.path().join("media").join(&movie().0).exists(), "nothing was downloaded");
+    server.shutdown().await;
+}

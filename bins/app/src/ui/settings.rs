@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use sppy_client_core::api::{Snapshot, UiCommand};
+use sppy_client_core::netaddr;
 use sppy_common::config::MediaRoot;
 
 use crate::app::SppyApp;
@@ -61,7 +62,14 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
         });
 
         ui.heading("My media folders");
-        ui.weak("Files here are used instead of downloading when they match the server's copy.");
+        ui.weak(
+            "Files here (and in the hosting folders below) are used instead of downloading \
+             when they match the server's copy.",
+        );
+        match snap.local.indexed_files {
+            None => ui.weak("Looking for video files…"),
+            Some(n) => ui.weak(format!("Video files found: {n}")),
+        };
         let mut remove = None;
         for (i, p) in c.local_media.iter().enumerate() {
             ui.horizontal(|ui| {
@@ -127,6 +135,21 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
         ui.heading("Hosting (Become host)");
         egui::Grid::new("host").num_columns(2).show(ui, |ui| {
             let h = &mut c.host;
+            ui.label("Listen on");
+            let options = netaddr::listen_options(&app.ui.local_ips, h.listen.ip());
+            let mut ip = h.listen.ip();
+            let current = options.iter().find(|(o, _)| *o == ip).map(|(_, l)| l.clone());
+            egui::ComboBox::from_id_salt("listen-ip")
+                .selected_text(current.unwrap_or_default())
+                .show_ui(ui, |ui| {
+                    for (o, label) in &options {
+                        ui.selectable_value(&mut ip, *o, label);
+                    }
+                })
+                .response
+                .on_hover_text("Where the server accepts connections; all addresses by default");
+            h.listen.set_ip(ip);
+            ui.end_row();
             ui.label("Port");
             let mut port = h.listen.port();
             if ui.add(egui::DragValue::new(&mut port).range(1..=65535)).changed() {
@@ -172,13 +195,15 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 save = true;
             }
             ui.weak(
-                "Sync and hosting settings apply on the next start; the player on Restart player.",
+                "Media folders apply on Save; sync and hosting settings on the next start; \
+                 the player on Restart player.",
             );
         });
     });
     app.ui.settings_open = open;
     if save || restart {
         app.save_config();
+        app.apply_media_folders();
     }
     if restart {
         app.restart_player();
