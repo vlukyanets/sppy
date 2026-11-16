@@ -682,6 +682,7 @@ impl<L: PlayerLauncher> Session<L> {
         };
         if let Source::File { file_id } = &next.source
             && self.cache.complete(file_id).is_none()
+            && self.local_copy(&next).is_none()
             && let Some(job) = self.download_job(&next, file_id)
         {
             self.downloader.enqueue(job, Priority::Prefetch);

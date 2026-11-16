@@ -149,3 +149,29 @@ async fn media_folders_changed_at_runtime_are_used() {
     assert!(!cache.path().join("media").join(&movie().0).exists(), "nothing was downloaded");
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn next_item_with_a_local_copy_is_not_prefetched() {
+    let (dir, media, cache) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let second: Vec<u8> = (0..30_000u32).map(|i| (i % 199) as u8).collect();
+    std::fs::write(media.path().join("Second.mkv"), second).unwrap();
+    let server = media_server(dir.path(), media.path()).await;
+    let mut config = cfg(cache.path(), Path::new("/nonexistent"));
+    config.local_media.clear();
+    config.prefetch_next = true;
+    config.host.media = vec![MediaRoot { name: "Movies".into(), path: media.path().to_path_buf() }];
+    let h = host_with(&server, FakeConfig::default(), config).await;
+    eventually("folders indexed", 5, || snap(&h.handle).local.indexed_files == Some(2)).await;
+    let second_id = sppy_server::library::file_id("Movies", Path::new("Second.mkv"));
+    h.send(UiCommand::PlaylistAdd(vec![
+        Source::File { file_id: movie() },
+        Source::File { file_id: second_id.clone() },
+    ]));
+    let original = media.path().join("Movie.mkv");
+    eventually("first item loaded", 5, || loaded_paths(&h).contains(&original)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let media_cache = cache.path().join("media");
+    assert!(!media_cache.join(&second_id.0).exists(), "the next item was downloaded");
+    server.shutdown().await;
+}
