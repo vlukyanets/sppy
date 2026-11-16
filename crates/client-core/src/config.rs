@@ -137,11 +137,28 @@ impl ClientConfig {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(io)?;
         }
-        let text = toml::to_string_pretty(self).expect("client config always serializes");
+        // Only what differs from the defaults: changed defaults then reach existing users.
+        let mut table = toml::Table::try_from(self).expect("client config always serializes");
+        let defaults =
+            toml::Table::try_from(Self::default()).expect("client config always serializes");
+        strip_defaults(&mut table, &defaults);
+        let text = toml::to_string_pretty(&table).expect("a toml table always serializes");
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, text).map_err(io)?;
         std::fs::rename(&tmp, path).map_err(io)
     }
+}
+
+/// Remove the values equal to `defaults`, descending into tables; emptied tables go too.
+fn strip_defaults(table: &mut toml::Table, defaults: &toml::Table) {
+    table.retain(|key, value| {
+        let Some(default) = defaults.get(key) else { return true };
+        if let (toml::Value::Table(t), toml::Value::Table(d)) = (&mut *value, default) {
+            strip_defaults(t, d);
+            return !t.is_empty();
+        }
+        value != default
+    });
 }
 
 /// Where the client keeps its files.
@@ -211,6 +228,29 @@ mod tests {
         assert_eq!(got, [("Films", movies), ("Extra", extra), ("Unplugged", gone)]);
         c.save(&file).unwrap();
         assert!(!std::fs::read_to_string(&file).unwrap().contains("local_media"));
+    }
+
+    #[test]
+    fn only_changed_settings_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("client.toml");
+        ClientConfig::default().save(&file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "");
+
+        let mut c = ClientConfig { nickname: "bob".into(), ..ClientConfig::default() };
+        c.advanced.dead_band_ms = 50;
+        c.host.listen.set_port(9000);
+        c.host.media.push(sppy_common::config::MediaRoot { name: "M".into(), path: "/m".into() });
+        c.save(&file).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        for wanted in ["nickname", "dead_band_ms", "listen", "[[host.media]]"] {
+            assert!(text.contains(wanted), "{wanted} missing in:\n{text}");
+        }
+        for unwanted in ["cache_limit_gb", "prefetch_next", "seek_threshold_ms", "max_participants"]
+        {
+            assert!(!text.contains(unwanted), "{unwanted} saved in:\n{text}");
+        }
+        assert_eq!(ClientConfig::load_or_default(&file).unwrap(), c);
     }
 
     #[test]
