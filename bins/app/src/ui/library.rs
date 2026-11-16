@@ -81,6 +81,8 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         }
         if snap.is_host && ui.small_button("Rescan").clicked() {
             app.send(UiCommand::RescanLibrary);
+            // The library folders are also where this computer finds its local copies.
+            app.apply_media_folders(true);
         }
     });
     let Some(roots) = snap.library.clone() else {

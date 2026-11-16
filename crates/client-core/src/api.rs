@@ -50,7 +50,8 @@ pub enum UiCommand {
     /// Host: end the current wait even though some participants are not ready.
     StartWithoutWaiting,
     SetMode(DeliveryMode),
-    /// Folders searched for local copies (see [`crate::config::ClientConfig::media_folders`]).
+    /// Folders searched for local copies (see [`crate::config::ClientConfig::media_folders`]);
+    /// scans them again even when unchanged.
     SetMediaFolders(Vec<std::path::PathBuf>),
     ChooseLocalFile {
         item_id: ItemId,

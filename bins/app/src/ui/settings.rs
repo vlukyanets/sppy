@@ -16,6 +16,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     let mut open = app.ui.settings_open;
     let mut save = false;
     let mut restart = false;
+    let mut rescan = false;
     egui::Window::new("Settings").open(&mut open).vscroll(true).show(ctx, |ui| {
         let c = &mut app.config;
         ui.horizontal(|ui| {
@@ -66,10 +67,19 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             "Files here (and in the hosting folders below) are used instead of downloading \
              when they match the server's copy.",
         );
-        match snap.local.indexed_files {
-            None => ui.weak("Looking for video files…"),
-            Some(n) => ui.weak(format!("Video files found: {n}")),
-        };
+        ui.horizontal(|ui| {
+            match snap.local.indexed_files {
+                None => ui.weak("Looking for video files…"),
+                Some(n) => ui.weak(format!("Video files found: {n}")),
+            };
+            if ui
+                .small_button("Rescan")
+                .on_hover_text("Look through the folders again, e.g. after adding files")
+                .clicked()
+            {
+                rescan = true;
+            }
+        });
         let mut remove = None;
         for (i, p) in c.local_media.iter().enumerate() {
             ui.horizontal(|ui| {
@@ -203,7 +213,9 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     app.ui.settings_open = open;
     if save || restart {
         app.save_config();
-        app.apply_media_folders();
+    }
+    if save || rescan {
+        app.apply_media_folders(rescan);
     }
     if restart {
         app.restart_player();

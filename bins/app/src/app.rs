@@ -226,10 +226,10 @@ impl SppyApp {
         self.ui.local_ips_at = Some(Instant::now());
     }
 
-    /// Tell the core about changed media folders (it rescans them).
-    pub fn apply_media_folders(&mut self) {
+    /// Tell the core about changed media folders (it rescans them); `force` rescans anyway.
+    pub fn apply_media_folders(&mut self, force: bool) {
         let folders = self.config.media_folders();
-        if folders != self.ui.media_folders {
+        if force || folders != self.ui.media_folders {
             self.ui.media_folders = folders.clone();
             self.send(UiCommand::SetMediaFolders(folders));
         }

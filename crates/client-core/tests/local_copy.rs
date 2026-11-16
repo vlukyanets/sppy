@@ -175,3 +175,20 @@ async fn next_item_with_a_local_copy_is_not_prefetched() {
     assert!(!media_cache.join(&second_id.0).exists(), "the next item was downloaded");
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn rescan_finds_files_added_later() {
+    let (dir, media, cache, mine) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let server = media_server(dir.path(), media.path()).await;
+    let h = host_with(&server, FakeConfig::default(), cfg(cache.path(), mine.path())).await;
+    eventually("empty folder indexed", 5, || snap(&h.handle).local.indexed_files == Some(0)).await;
+    std::fs::write(mine.path().join("late.mkv"), movie_bytes()).unwrap();
+    h.send(UiCommand::SetMediaFolders(vec![mine.path().to_path_buf()]));
+    eventually("rescanned", 5, || snap(&h.handle).local.indexed_files == Some(1)).await;
+    server.shutdown().await;
+}
