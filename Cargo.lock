@@ -4186,6 +4186,7 @@ dependencies = [
  "sppy-player",
  "sppy-proto",
  "sppy-server",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
