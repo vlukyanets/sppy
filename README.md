@@ -26,8 +26,9 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
 
 ## Quick start: host from the app
 
-1. Run `sppy`, enter a nickname, open ⚙ Settings → *Hosting* and add a media folder.
-   Save, then click **Become host**.
+1. Run `sppy`, enter a nickname, open ⚙ Settings → *My media folders* and add a folder.
+   Save, then click **Become host**. While you host, your media folders are the library
+   everyone picks from, and you play them straight from your disk.
 2. Click **Copy invite link** and send it to your friends (`sppy://host:8740/<token>`).
    The list next to it picks the address in the link: one of this computer's
    addresses (LAN, VPN such as Tailscale) or the *Public address* from Settings.
@@ -54,10 +55,16 @@ resume_buffer_secs = 10
 [[media]]
 name = "Movies"
 path = "/srv/media/movies"
+
+# The host can add and remove folders from the app (Settings → Server folders);
+# they are saved into this file. Set to false to allow changes only here.
+# allow_remote_media_changes = true
 ```
 
 Invite link: `sppy://mybox.tailnet.ts.net:8740/<invite token>`. Behind a TLS reverse
-proxy use `sppys://…`. Other commands: `rotate-invite`, `rotate-host-token`.
+proxy use `sppys://…`. Connecting with the host token instead
+(`sppy://mybox.tailnet.ts.net:8740/<host token>`) makes you the host: you control the
+room and manage the shared folders in ⚙ Settings → *Server folders*. Keep that link private. Other commands: `rotate-invite`, `rotate-host-token`.
 State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
 
 ## Delivery modes
@@ -67,6 +74,10 @@ State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
   item is fetched in advance). After repeated download failures sppy falls back to streaming.
 - **My media folders** — if a file with the same fingerprint is found there (any name,
   any folder), it is played directly. A file can also be chosen by hand (📁).
+
+Downloads go to the cache: `~/.cache/sppy/media` on Linux,
+`%LOCALAPPDATA%\sppy\cache\media` on Windows (`$SPPY_HOME/.cache/media` when `SPPY_HOME`
+is set). Its size limit and **Clear cache** are in Settings.
 
 ## Subtitles
 

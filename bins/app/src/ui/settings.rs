@@ -2,11 +2,12 @@
 
 use std::path::PathBuf;
 
-use sppy_client_core::api::{Snapshot, UiCommand};
+use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
 use sppy_client_core::netaddr;
-use sppy_common::config::MediaRoot;
+use sppy_common::folders;
+use sppy_proto::MediaFolderProblem;
 
-use crate::app::SppyApp;
+use crate::app::{SppyApp, UiState};
 
 fn pick_folder() -> Option<PathBuf> {
     rfd::FileDialog::new().pick_folder()
@@ -64,8 +65,8 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
 
         ui.heading("My media folders");
         ui.weak(
-            "Files here (and in the hosting folders below) are used instead of downloading \
-             when they match the server's copy.",
+            "Videos here play from your disk instead of being downloaded. \
+             When you host, everyone can watch them.",
         );
         ui.horizontal(|ui| {
             match snap.local.indexed_files {
@@ -81,21 +82,42 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             }
         });
         let mut remove = None;
-        for (i, p) in c.local_media.iter().enumerate() {
+        for (i, r) in c.host.media.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                ui.label(p.display().to_string());
+                ui.add(egui::TextEdit::singleline(&mut r.name).desired_width(100.0))
+                    .on_hover_text("Name shown in the Library while you host");
+                ui.label(r.path.display().to_string());
                 if ui.small_button("✕").clicked() {
                     remove = Some(i);
                 }
             });
         }
         if let Some(i) = remove {
-            c.local_media.remove(i);
+            c.host.media.remove(i);
         }
         if ui.button("Add folder…").clicked()
-            && let Some(p) = pick_folder()
+            && let Some(path) = pick_folder()
         {
-            c.local_media.push(p);
+            match folders::new_folder(&c.host.media, &path, None) {
+                Ok(root) => {
+                    c.host.media.push(root);
+                    app.ui.folder_error = None;
+                }
+                Err(MediaFolderProblem::AlreadyShared) => {
+                    app.ui.folder_error = Some("This folder is already in the list".into());
+                }
+                Err(_) => app.ui.folder_error = Some("Cannot read this folder".into()),
+            }
+        }
+        if let Some(e) = &app.ui.folder_error {
+            ui.colored_label(super::RED, e);
+        }
+
+        if snap.is_host
+            && app.host.is_none()
+            && let Some(server) = &snap.server_folders
+        {
+            server_folders(&mut app.ui, &app.handle, ui, server);
         }
 
         ui.heading("Downloads");
@@ -176,36 +198,13 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             }
             ui.end_row();
         });
-        let mut remove = None;
-        for (i, r) in c.host.media.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut r.name).desired_width(100.0));
-                ui.label(r.path.display().to_string());
-                if ui.small_button("✕").clicked() {
-                    remove = Some(i);
-                }
-            });
-        }
-        if let Some(i) = remove {
-            c.host.media.remove(i);
-        }
-        if ui.button("Add media folder…").clicked()
-            && let Some(path) = pick_folder()
-        {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Media".into());
-            c.host.media.push(MediaRoot { name, path });
-        }
-
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
                 save = true;
             }
             ui.weak(
-                "Media folders apply on Save; sync and hosting settings on the next start; \
+                "Folders apply on Save; sync and hosting settings on the next start; \
                  the player on Restart player.",
             );
         });
@@ -217,7 +216,75 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     if save || rescan {
         app.apply_media_folders(rescan);
     }
+    if save && let Some(host) = &app.host {
+        host.set_media_folders(app.config.host.media.clone());
+    }
     if restart {
         app.restart_player();
     }
+}
+
+/// The folders of the server we are the host of (it runs elsewhere): paths on that machine.
+fn server_folders(
+    state: &mut UiState,
+    handle: &ClientHandle,
+    ui: &mut egui::Ui,
+    server: &ServerFolders,
+) {
+    let send = |cmd| {
+        let _ = handle.commands.send(cmd);
+    };
+    ui.heading("Server folders");
+    ui.weak("What the server shares with everyone. Paths are on the server's machine.");
+    for f in &server.folders {
+        ui.horizontal(|ui| {
+            ui.strong(&f.name);
+            ui.label(&f.path);
+            if !f.available {
+                ui.colored_label(super::RED, "not found on the server");
+            }
+            if !server.editable {
+                return;
+            }
+            if state.confirm_unshare.as_deref() == Some(f.name.as_str()) {
+                ui.label("Stop sharing for everyone?");
+                if ui.small_button("Yes").clicked() {
+                    send(UiCommand::RemoveServerFolder { name: f.name.clone() });
+                    state.confirm_unshare = None;
+                }
+                if ui.small_button("No").clicked() {
+                    state.confirm_unshare = None;
+                }
+            } else if ui.small_button("✕").on_hover_text("Stop sharing this folder").clicked() {
+                state.confirm_unshare = Some(f.name.clone());
+            }
+        });
+    }
+    if !server.editable {
+        ui.weak("Changing them from the app is turned off in the server's server.toml.");
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut state.server_folder_path)
+                .hint_text("/srv/media/Movies")
+                .desired_width(220.0),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut state.server_folder_name)
+                .hint_text("Name (optional)")
+                .desired_width(110.0),
+        );
+        let path = state.server_folder_path.trim().to_owned();
+        if ui
+            .add_enabled(!path.is_empty(), egui::Button::new("Share"))
+            .on_hover_text("Share this folder of the server's machine")
+            .clicked()
+        {
+            let name = Some(state.server_folder_name.trim().to_owned()).filter(|n| !n.is_empty());
+            send(UiCommand::AddServerFolder { path, name });
+            state.server_folder_path.clear();
+            state.server_folder_name.clear();
+        }
+    });
 }

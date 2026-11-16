@@ -90,8 +90,10 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         return;
     };
     if roots.is_empty() {
-        if snap.is_host {
-            ui.weak("No media folders: add one in Settings → Hosting, then Rescan.");
+        if snap.is_host && app.host.is_some() {
+            ui.weak("Nothing shared yet: add a folder in Settings → My media folders, then Save.");
+        } else if snap.is_host {
+            ui.weak("Nothing shared yet: add a folder in Settings → Server folders.");
         } else {
             ui.weak("The host has not shared any media folders.");
         }

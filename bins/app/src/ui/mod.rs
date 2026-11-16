@@ -62,7 +62,7 @@ pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(
                 YELLOW,
-                "The library is empty: add a media folder in Settings → Hosting.",
+                "Nothing is shared yet: add a folder in Settings → My media folders.",
             );
             if ui.small_button("Open settings").clicked() {
                 app.ui.settings_open = true;

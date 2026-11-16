@@ -46,6 +46,12 @@ pub struct UiState {
     /// This machine's addresses, refreshed while hosting or in the settings.
     pub local_ips: Vec<LocalIp>,
     local_ips_at: Option<Instant>,
+    /// "Add folder…" was refused.
+    pub folder_error: Option<String>,
+    /// A server folder about to stop being shared (asks first).
+    pub confirm_unshare: Option<String>,
+    pub server_folder_path: String,
+    pub server_folder_name: String,
     /// The invite address being typed ("Other address…").
     pub custom_host: Option<String>,
     /// Folders the core searches for local copies, as last sent to it.
@@ -109,6 +115,10 @@ impl SppyApp {
             local_ips: Vec::new(),
             local_ips_at: None,
             custom_host: None,
+            folder_error: None,
+            confirm_unshare: None,
+            server_folder_path: String::new(),
+            server_folder_name: String::new(),
             media_folders: config.media_folders(),
         };
         let events = handle.subscribe_events();

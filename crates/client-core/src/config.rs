@@ -160,7 +160,7 @@ impl ClientPaths {
         let data = root.join("data");
         ClientPaths {
             config_file: root.join("config").join("client.toml"),
-            cache_dir: root.join("cache"),
+            cache_dir: root.join(".cache"),
             host_data_dir: data.join("host"),
             logs_dir: data.join("logs"),
             data_dir: data,
@@ -267,7 +267,7 @@ mod tests {
     fn paths_under_sppy_home() {
         let p = ClientPaths::under(std::path::Path::new("/x"));
         assert_eq!(p.config_file, std::path::PathBuf::from("/x/config/client.toml"));
-        assert_eq!(p.cache_dir, std::path::PathBuf::from("/x/cache"));
+        assert_eq!(p.cache_dir, std::path::PathBuf::from("/x/.cache"));
         assert_eq!(p.host_data_dir, std::path::PathBuf::from("/x/data/host"));
         assert_eq!(p.logs_dir, std::path::PathBuf::from("/x/data/logs"));
     }

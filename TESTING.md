@@ -29,7 +29,7 @@ when `mpv` is not on `PATH`.
 Run each instance with its own home so they do not share config and cache:
 `SPPY_HOME=/tmp/sppy-a cargo run -p sppy-app` and `SPPY_HOME=/tmp/sppy-b cargo run -p sppy-app`.
 
-1. A: Settings → Hosting → add a media folder (with a video and a `.srt` next to it), Save,
+1. A: Settings → My media folders → add a folder (with a video and a `.srt` next to it), Save,
    **Become host**. Pick an address in the list next to **Copy invite link** (or
    *Other address…* to type one), then **Copy invite link**.
 2. B: paste the link, nickname, **Connect**. Both list two participants.
@@ -41,15 +41,17 @@ Run each instance with its own home so they do not share config and cache:
    Switch to *Selected participants*, tick `ctrl` for B → B can pause again.
 8. B: switch to **Preload**, select another item → progress bar in Participants, then
    playback from the cache. Settings shows the cache size; **Clear cache** keeps playlist files.
-9. B: Settings → My media folders → add a folder containing a renamed copy of a library
+9. A: while hosting, add a folder in Settings → My media folders and Save → it appears
+   in B's Library without restarting.
+10. B: Settings → My media folders → add a folder containing a renamed copy of a library
    file, Save → "Video files found" updates and that item plays from the local copy
    (Participants shows `local`). Copy another file there, press **Rescan** → it is found.
    A in **Preload** plays library files directly (`local`), nothing is downloaded.
-10. Long stall: throttle B (e.g. `--cache-secs=1` in extra args plus a slow link, or
+11. Long stall: throttle B (e.g. `--cache-secs=1` in extra args plus a slow link, or
     `tc qdisc add dev lo root netem rate 1mbit`) → after 10 s everyone waits for B and
     resumes once B has buffered.
-11. A: Kick B (with confirmation) → B sees "You were removed from the room".
-12. Close A's window → B shows "Server unavailable, reconnecting".
+12. A: Kick B (with confirmation) → B sees "You were removed from the room".
+13. Close A's window → B shows "Server unavailable, reconnecting".
 
 ## Manual: headless server over Tailscale
 
@@ -57,3 +59,9 @@ Run each instance with its own home so they do not share config and cache:
    `sppy-server`, note the invite token (`sppy-server print-tokens`).
 2. On two other machines, connect with `sppy://<tailscale-name>:8740/<invite>`.
 3. Repeat steps 2–5 above in stream mode, then in preload mode.
+4. Connect with the host token instead of the invite (`sppy://<name>:8740/<host token>`):
+   you are the host. Settings → *Server folders* lists the `[[media]]` folders. Share another
+   folder by its path on the server → it appears in everyone's Library and in
+   `server.toml` (comments kept). Remove it (✕, confirm) → gone from both. A relative or
+   missing path shows the reason in red. With `allow_remote_media_changes = false` the
+   list is read-only.
