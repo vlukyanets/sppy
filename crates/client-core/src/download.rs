@@ -196,7 +196,7 @@ async fn run_job(
                 attempts += 1;
                 let line = format!("download of {} failed (attempt {attempts}): {e}", job.url);
                 tracing::warn!("{}", crate::media::redact_tokens(&line));
-                if attempts >= limit {
+                if attempts >= limit || matches!(e, Failure::Final(_)) {
                     let _ = ev_tx.send(DownloadEvent::Failed { file_id: job.file_id, attempts });
                     return;
                 }
@@ -230,11 +230,40 @@ fn content_range_start(resp: &reqwest::Response) -> Option<u64> {
     v.strip_prefix("bytes ")?.split('-').next()?.parse().ok()
 }
 
+/// Why a download attempt failed.
+#[derive(Debug)]
+enum Failure {
+    /// Another try may work (network, server error).
+    Retry(String),
+    /// Another try would end the same way: the size is wrong or does not fit.
+    Final(String),
+}
+
+impl From<String> for Failure {
+    fn from(e: String) -> Self {
+        Failure::Retry(e)
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(e: &str) -> Self {
+        Failure::Retry(e.to_owned())
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Retry(e) | Failure::Final(e) => f.write_str(e),
+        }
+    }
+}
+
 async fn download_once(
     client: &reqwest::Client,
     job: &DownloadJob,
     ev_tx: &mpsc::UnboundedSender<DownloadEvent>,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let part = part_path(&job.dest);
     if let Some(dir) = job.dest.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
@@ -269,14 +298,16 @@ async fn download_once(
             {
                 let _ = tokio::fs::remove_file(&part).await;
             }
-            return Err(format!("HTTP {status}"));
+            return Err(format!("HTTP {status}").into());
         }
     };
     if job.total_hint.is_some_and(|hint| hint != total) {
-        return Err(format!("the server announces {total} bytes, the fingerprint says otherwise"));
+        return Err(Failure::Final(format!(
+            "the server announces {total} bytes, the fingerprint says otherwise"
+        )));
     }
     if total > job.max_bytes {
-        return Err(format!("{total} bytes do not fit into the cache"));
+        return Err(Failure::Final(format!("{total} bytes do not fit into the cache")));
     }
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -291,7 +322,9 @@ async fn download_once(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
         if bytes + chunk.len() as u64 > total {
-            return Err(format!("the server sends more than the {total} bytes it announced"));
+            return Err(Failure::Final(format!(
+                "the server sends more than the {total} bytes it announced"
+            )));
         }
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         bytes += chunk.len() as u64;
@@ -304,7 +337,7 @@ async fn download_once(
     file.flush().await.map_err(|e| e.to_string())?;
     drop(file);
     if bytes != total {
-        return Err(format!("incomplete download: {bytes} of {total} bytes"));
+        return Err(format!("incomplete download: {bytes} of {total} bytes").into());
     }
     tokio::fs::rename(&part, &job.dest).await.map_err(|e| e.to_string())?;
     let _ = ev_tx.send(DownloadEvent::Progress { file_id: job.file_id.clone(), bytes, total });

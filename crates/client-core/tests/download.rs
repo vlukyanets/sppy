@@ -236,9 +236,9 @@ async fn refuses_a_file_bigger_than_the_cache() {
     j.max_bytes = 50_000;
     dl.enqueue(j, Priority::Current);
     let (last, _) = until_final(&mut rx).await;
-    assert!(matches!(last, DownloadEvent::Failed { .. }), "{last:?}");
+    assert_eq!(last, DownloadEvent::Failed { file_id: FileId("a".into()), attempts: 1 });
     assert!(!dir.path().join("a").exists() && !dir.path().join("a.part").exists());
-    assert!(!srv.ranges.lock().unwrap().is_empty());
+    assert_eq!(srv.ranges.lock().unwrap().len(), 1, "a size refusal is not retried");
 }
 
 #[tokio::test]
@@ -250,7 +250,7 @@ async fn refuses_a_size_other_than_the_fingerprint_says() {
     j.total_hint = Some(99_999);
     dl.enqueue(j, Priority::Current);
     let (last, _) = until_final(&mut rx).await;
-    assert!(matches!(last, DownloadEvent::Failed { .. }), "{last:?}");
+    assert_eq!(last, DownloadEvent::Failed { file_id: FileId("a".into()), attempts: 1 });
     assert!(!dir.path().join("a").exists());
 }
 
