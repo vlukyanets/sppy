@@ -15,6 +15,9 @@ Download the archive for your system from
 [Releases](https://github.com/vlukyanets/sppy/releases) and unpack it: `sppy` is the app,
 `sppy-server` the optional headless server.
 
+To check a download: `sha256sum -c SHA256SUMS --ignore-missing` (Linux) or
+`Get-FileHash sppy-*.zip` in PowerShell, compared with the line in `SHA256SUMS`.
+
 sppy drives a separately installed [mpv](https://mpv.io):
 
 - Windows: `winget install mpv` (or download mpv and set its path in ⚙ Settings).
