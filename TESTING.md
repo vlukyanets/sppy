@@ -8,8 +8,14 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Tests that need mpv (`sppy-player` mpv tests, `sppy-client-core` `real_mpv`) are skipped
-when `mpv` is not on `PATH`.
+Tests that need mpv (`sppy-player` mpv tests) are skipped when `mpv` is not on `PATH`.
+
+Sync quality with real players is measured by hand (it depends on the machine's load, so
+CI does not run it): two clients with headless mpv must stay within 80 ms of the room.
+
+```sh
+cargo test -p sppy-client-core --test real_mpv -- --ignored --nocapture
+```
 
 ## Manual: two clients on one machine
 

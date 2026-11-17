@@ -1,4 +1,8 @@
 //! Two clients with real (headless) mpv instances stay in sync. Skipped without mpv.
+//!
+//! A real-time measurement, not a unit test: on shared CI machines the result depends on
+//! the neighbours' load, so it runs only by hand:
+//! `cargo test -p sppy-client-core --test real_mpv -- --ignored --nocapture`.
 
 mod common;
 
@@ -36,6 +40,7 @@ async fn wait(what: &str, secs: u64, pred: impl Fn() -> bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "real-time measurement with real mpv: run by hand"]
 async fn two_real_mpv_clients_stay_in_sync() {
     let dir = tempfile::tempdir().unwrap();
     let Some(clip) = make_clip(dir.path(), 60) else {
