@@ -139,11 +139,15 @@ impl Write for SizeLimitedFile {
 mod tests {
     use super::*;
 
+    /// Names and sizes; sizes from the files themselves, since on Windows the directory
+    /// listing shows the size of a file still open for writing only once it is closed.
     fn sizes(dir: &Path) -> Vec<(String, u64)> {
         let mut v: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .flatten()
-            .map(|e| (e.file_name().into_string().unwrap(), e.metadata().unwrap().len()))
+            .map(|e| {
+                (e.file_name().into_string().unwrap(), std::fs::metadata(e.path()).unwrap().len())
+            })
             .collect();
         v.sort();
         v
@@ -156,7 +160,7 @@ mod tests {
         for i in 0..50 {
             writeln!(f, "line {i:04} xxxxxxxxxxxxxxxxxxxxxxxxx").unwrap();
         }
-        f.flush().unwrap();
+        drop(f);
         let files = sizes(dir.path());
         let names: Vec<_> = files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["sppy.log", "sppy.log.1", "sppy.log.2"]);
@@ -173,6 +177,7 @@ mod tests {
         std::fs::write(dir.path().join("sppy.log"), vec![b'x'; 90]).unwrap();
         let mut f = SizeLimitedFile::open(dir.path(), "sppy.log", 100, 1).unwrap();
         f.write_all(b"0123456789abcdef\n").unwrap();
+        drop(f);
         assert_eq!(sizes(dir.path()), [("sppy.log".into(), 17), ("sppy.log.1".into(), 90)]);
     }
 
@@ -182,6 +187,7 @@ mod tests {
         let mut f = SizeLimitedFile::open(dir.path(), "sppy.log", 20, 0).unwrap();
         f.write_all(b"first line......\n").unwrap();
         f.write_all(b"second line.....\n").unwrap();
+        drop(f);
         let text = std::fs::read_to_string(dir.path().join("sppy.log")).unwrap();
         assert_eq!(text, "second line.....\n");
         assert_eq!(sizes(dir.path()).len(), 1);
