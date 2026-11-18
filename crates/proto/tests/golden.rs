@@ -214,6 +214,10 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
                 code: ErrorCode::MediaFolder { problem: MediaFolderProblem::NotFound },
             },
         ),
+        (
+            "DeniedPlaylistFull",
+            ServerMsg::Denied { req_id: 16, code: ErrorCode::PlaylistFull { max_items: 1000 } },
+        ),
         ("Closing", ServerMsg::Closing { reason: CloseReason::Kicked }),
     ]
 }

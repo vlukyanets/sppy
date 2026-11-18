@@ -9,6 +9,7 @@ pub mod library;
 mod media;
 pub mod paths;
 mod persist;
+mod rate;
 pub mod room;
 pub mod tokens;
 

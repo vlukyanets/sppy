@@ -141,6 +141,20 @@ pub fn reject_text(code: &sppy_proto::ErrorCode, server_message: &str) -> String
     }
 }
 
+/// What to tell the user when the server refused a request.
+pub fn denied_text(code: &sppy_proto::ErrorCode) -> String {
+    use sppy_proto::ErrorCode;
+    match code {
+        ErrorCode::NotPermitted => crate::session::NO_PERMISSION.to_owned(),
+        ErrorCode::NotHost => "Only the host can do that".to_owned(),
+        ErrorCode::MediaFolder { problem } => folder_problem_text(*problem).to_owned(),
+        ErrorCode::PlaylistFull { max_items } => {
+            format!("The playlist is full ({max_items} items). Remove some items first")
+        }
+        other => format!("Request rejected: {other:?}"),
+    }
+}
+
 /// What to tell the host when a folder change is refused.
 pub fn folder_problem_text(problem: sppy_proto::MediaFolderProblem) -> &'static str {
     use sppy_proto::MediaFolderProblem::*;
@@ -161,6 +175,14 @@ mod tests {
     use sppy_proto::*;
 
     use super::*;
+
+    #[test]
+    fn full_playlist_says_what_to_do() {
+        assert_eq!(
+            denied_text(&ErrorCode::PlaylistFull { max_items: 1000 }),
+            "The playlist is full (1000 items). Remove some items first"
+        );
+    }
 
     fn room() -> RoomState {
         let p = |id, nick: &str| Participant {

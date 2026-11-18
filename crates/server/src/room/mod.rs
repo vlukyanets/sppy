@@ -20,6 +20,16 @@ pub use persist::PersistedState;
 use playback::PlaybackCmd;
 pub use playlist::FileInfo;
 
+use crate::rate::TokenBucket;
+
+/// The playlist is saved and sent to everyone on every change, so it has a size limit.
+const MAX_PLAYLIST_ITEMS: usize = 1000;
+/// Longer links are not real video links.
+const MAX_URL_CHARS: usize = 4096;
+/// Chat messages a participant may send at once; after that one per [`CHAT_REFILL_MS`].
+const CHAT_BURST: u32 = 10;
+const CHAT_REFILL_MS: u64 = 1000;
+
 /// Static room configuration, derived from the server config.
 #[derive(Debug, Clone)]
 pub struct RoomConfig {
@@ -42,6 +52,7 @@ struct Member {
     info: Participant,
     session_token: String,
     disconnected_at: Option<u64>,
+    chat_rate: TokenBucket,
 }
 
 /// The whole pure state of the single room.

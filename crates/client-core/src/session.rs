@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use sppy_player::{MediaSource, Player, PlayerError, PlayerEvent, PlayerLauncher};
 use sppy_proto::{
-    ClientMsg, CloseReason, Delivery, ErrorCode, Event, FileId, Item, ItemId, MediaStatus,
-    PlaybackState, ReqId, ServerMsg, Source,
+    ClientMsg, CloseReason, Delivery, Event, FileId, Item, ItemId, MediaStatus, PlaybackState,
+    ReqId, ServerMsg, Source,
 };
 use sppy_sync::{
     Classified, Correction, DriftController, EchoFilter, Observed, PendingOp, RawEvent, Target,
@@ -498,14 +498,7 @@ impl<L: PlayerLauncher> Session<L> {
                 if self.awaiting.is_some_and(|(r, _)| r == req_id) {
                     self.awaiting = None;
                 }
-                let text = match code {
-                    ErrorCode::NotPermitted => NO_PERMISSION.to_owned(),
-                    ErrorCode::NotHost => "Only the host can do that".to_owned(),
-                    ErrorCode::MediaFolder { problem } => {
-                        crate::notice::folder_problem_text(problem).to_owned()
-                    }
-                    other => format!("Request rejected: {other:?}"),
-                };
+                let text = crate::notice::denied_text(&code);
                 self.osd(&text).await;
                 self.emit(UiEvent::Error(text));
             }

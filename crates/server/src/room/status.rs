@@ -246,10 +246,13 @@ impl Room {
     }
 
     pub(super) fn chat(&mut self, now_ms: u64, pid: ParticipantId, text: String) -> Vec<Effect> {
-        let Some(m) = self.member(pid) else {
+        if text.trim().is_empty() || text.chars().count() > MAX_CHAT_CHARS {
+            return Vec::new();
+        }
+        let Some(m) = self.members.iter_mut().find(|m| m.info.id == pid) else {
             return Vec::new();
         };
-        if text.trim().is_empty() || text.chars().count() > MAX_CHAT_CHARS {
+        if !m.chat_rate.try_take(now_ms) {
             return Vec::new();
         }
         let msg = ChatMessage {

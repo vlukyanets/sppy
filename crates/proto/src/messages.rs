@@ -176,6 +176,10 @@ pub enum ErrorCode {
     UnknownItem,
     UnknownFile,
     InvalidRequest,
+    /// Adding these items would make the playlist longer than the server allows.
+    PlaylistFull {
+        max_items: u32,
+    },
     /// A media folder change was refused.
     MediaFolder {
         problem: MediaFolderProblem,

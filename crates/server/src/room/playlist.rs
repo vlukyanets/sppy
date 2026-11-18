@@ -5,7 +5,7 @@ use sppy_proto::{
     ParticipantId, ReqId, SkipReason, Source, Subtitle,
 };
 
-use super::{Effect, Room};
+use super::{Effect, MAX_PLAYLIST_ITEMS, MAX_URL_CHARS, Room};
 
 /// What the room needs to know about a library file.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,8 +55,13 @@ impl Room {
         if !self.can_control(pid) {
             return self.denied(pid, req_id, ErrorCode::NotPermitted);
         }
-        if sources.is_empty() {
+        let too_long = |s: &Source| matches!(s, Source::Url { url } if url.len() > MAX_URL_CHARS);
+        if sources.is_empty() || sources.iter().any(too_long) {
             return self.denied(pid, req_id, ErrorCode::InvalidRequest);
+        }
+        if self.playlist.len().saturating_add(sources.len()) > MAX_PLAYLIST_ITEMS {
+            let max_items = u32::try_from(MAX_PLAYLIST_ITEMS).unwrap_or(u32::MAX);
+            return self.denied(pid, req_id, ErrorCode::PlaylistFull { max_items });
         }
         let mut new_items = Vec::with_capacity(sources.len());
         for source in sources {

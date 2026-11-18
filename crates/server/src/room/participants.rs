@@ -2,7 +2,8 @@
 
 use sppy_proto::{ErrorCode, MediaStatus, NoticeAction, Participant, ParticipantId};
 
-use super::{Effect, Member, Room};
+use super::{CHAT_BURST, CHAT_REFILL_MS, Effect, Member, Room};
+use crate::rate::TokenBucket;
 
 const MAX_NICKNAME_CHARS: usize = 32;
 
@@ -54,6 +55,7 @@ impl Room {
             },
             session_token: req.session_token,
             disconnected_at: None,
+            chat_rate: TokenBucket::new(now_ms, CHAT_BURST, CHAT_REFILL_MS),
         });
         let mut effects = vec![self.welcome(now_ms, pid), self.broadcast_room()];
         effects.push(Self::notice(Some(pid), NoticeAction::Joined));

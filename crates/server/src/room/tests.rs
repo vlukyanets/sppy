@@ -996,11 +996,11 @@ mod status {
             Effect::Broadcast { msg: ServerMsg::Event(Event::Chat(c)) } if c.text == "hello" && c.nickname == "host" && c.at_server_ms == 7
         )));
         for i in 0..60 {
-            r.command(8, h, ClientMsg::Chat { text: format!("m{i}") });
+            r.command(1_000 * (i + 1), h, ClientMsg::Chat { text: format!("m{i}") });
         }
         let joined = r
             .join(
-                9,
+                100_000,
                 JoinRequest {
                     nickname: "late".into(),
                     role: JoinRole::Guest,
@@ -1426,5 +1426,63 @@ mod item_end {
         status(&mut r, 1_000, h, 1, MediaStatus::PlayerClosed);
         r.command(20_000, g, ClientMsg::ItemEnded { item_id: ItemId(1) });
         assert_eq!(r.playback().item_id, Some(ItemId(2)));
+    }
+}
+
+/// Whoever has the invite link must not be able to grow the server's state or flood the
+/// others without bound.
+mod limits {
+    use super::*;
+
+    fn urls(n: usize) -> Vec<Source> {
+        (0..n).map(|i| Source::Url { url: format!("https://example.org/{i}") }).collect()
+    }
+
+    fn denied_code(effects: &[Effect]) -> Option<ErrorCode> {
+        effects.iter().find_map(|e| match e {
+            Effect::Send { msg: ServerMsg::Denied { code, .. }, .. } => Some(code.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn playlist_stops_growing_at_its_limit() {
+        let mut r = room();
+        let h = host(&mut r);
+        assert_eq!(denied_code(&add(&mut r, 0, h, urls(MAX_PLAYLIST_ITEMS - 1), None)), None);
+        let full = ErrorCode::PlaylistFull { max_items: MAX_PLAYLIST_ITEMS as u32 };
+        assert_eq!(denied_code(&add(&mut r, 0, h, urls(2), None)), Some(full.clone()));
+        assert_eq!(r.state().playlist.len(), MAX_PLAYLIST_ITEMS - 1, "all or nothing");
+        assert_eq!(denied_code(&add(&mut r, 0, h, urls(1), None)), None);
+        assert_eq!(denied_code(&add(&mut r, 0, h, urls(1), None)), Some(full));
+        assert_eq!(r.state().playlist.len(), MAX_PLAYLIST_ITEMS);
+    }
+
+    #[test]
+    fn overlong_url_is_refused() {
+        let mut r = room();
+        let h = host(&mut r);
+        let long = format!("https://example.org/{}", "a".repeat(MAX_URL_CHARS));
+        let effects = add(&mut r, 0, h, vec![Source::Url { url: long }], None);
+        assert_eq!(denied_code(&effects), Some(ErrorCode::InvalidRequest));
+        assert!(r.state().playlist.is_empty());
+    }
+
+    fn chat(r: &mut Room, now: u64, pid: ParticipantId) -> bool {
+        r.command(now, pid, ClientMsg::Chat { text: "hi".into() })
+            .iter()
+            .any(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Event(Event::Chat(_)) }))
+    }
+
+    #[test]
+    fn chat_allows_a_burst_then_one_message_a_second() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        assert!((0..CHAT_BURST).all(|_| chat(&mut r, 0, g)));
+        assert!(!chat(&mut r, 500, g), "flood dropped");
+        assert!(chat(&mut r, 0, h), "others can still talk");
+        assert!(chat(&mut r, CHAT_REFILL_MS, g));
+        assert!(!chat(&mut r, CHAT_REFILL_MS, g));
     }
 }
