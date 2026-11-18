@@ -1,10 +1,11 @@
-//! Media duration from container headers, without decoding: Matroska/WebM (`Segment/Info/
-//! Duration`), MP4/MOV (`moov/mvhd`, or `mvex/mehd` when fragmented) and AVI (frames of
-//! the video stream, OpenDML total for big files). Other formats (MPEG-TS, …) give `None`:
-//! the server then relies on what the players report.
+//! Media duration without decoding: from container headers for Matroska/WebM (`Segment/
+//! Info/Duration`), MP4/MOV (`moov/mvhd`, or `mvex/mehd` when fragmented) and AVI (frames
+//! of the video stream, OpenDML total for big files); from the timestamps at both ends for
+//! MPEG-TS, which has no header that says it. Other formats give `None`: the server then
+//! relies on what the players report.
 //!
-//! Only headers are read, never the media data. Sizes and loop counts are bounded, so a
-//! broken file gives `None` rather than a long read.
+//! Only headers and a few small windows are read, never the whole file. Sizes and loop
+//! counts are bounded, so a broken file gives `None` rather than a long read.
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
@@ -33,6 +34,8 @@ pub fn from_reader<R: Read + Seek>(r: &mut R, len: u64) -> Option<u64> {
         avi(r, len)
     } else if matches!(&magic[4..8], b"ftyp" | b"moov" | b"mdat" | b"free" | b"wide" | b"skip") {
         mp4(r, len)
+    } else if magic[0] == SYNC || magic[4] == SYNC {
+        mpeg_ts(r, len)
     } else {
         None
     }
@@ -321,6 +324,159 @@ fn avi<R: Read + Seek>(r: &mut R, len: u64) -> Option<u64> {
     u64::try_from(ms).ok().filter(|ms| *ms > 0)
 }
 
+// ---- MPEG-TS ---------------------------------------------------------------------------
+
+const SYNC: u8 = 0x47;
+/// Bytes read at each end of the file.
+const TS_END_WINDOW: u64 = 1 << 20;
+/// Bytes read at each point checked in between.
+const TS_SAMPLE: u64 = 64 << 10;
+/// Points checked in between, in files big enough for them to say something.
+const TS_SAMPLES: u64 = 7;
+/// PTS are 33-bit counters of a 90 kHz clock.
+const PTS_WRAP: i64 = 1 << 33;
+const TICKS_PER_SECOND: i64 = 90_000;
+/// Frames come out of order (B-frames), but not by this much.
+const MAX_BACK: i64 = TICKS_PER_SECOND;
+/// Neither do neighbouring PES of one stream lie this far apart.
+const MAX_GAP: i64 = 10 * TICKS_PER_SECOND;
+
+/// How a PES is played, best for timing first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EsKind {
+    Video,
+    Audio,
+    Other,
+}
+
+/// A PES start with its presentation timestamp.
+#[derive(Debug, Clone, Copy)]
+struct Pes {
+    pid: u16,
+    kind: EsKind,
+    pts: i64,
+}
+
+/// Packet size and where the sync byte is in it: plain TS (188) or M2TS/BDAV (192, with a
+/// 4-byte timecode first). Three packets in a row must start right.
+fn ts_layout(head: &[u8]) -> Option<(usize, usize)> {
+    [(188, 0), (192, 4)]
+        .into_iter()
+        .find(|(size, at)| (0..3).all(|k| head.get(at + k * size) == Some(&SYNC)))
+}
+
+/// PES starts with a PTS in `buf`, which begins at a packet boundary.
+fn pes_starts(buf: &[u8], (size, at): (usize, usize)) -> Vec<Pes> {
+    buf.chunks_exact(size).filter_map(|p| pes_start(p.get(at..at + 188)?)).collect()
+}
+
+fn pes_start(t: &[u8]) -> Option<Pes> {
+    let error = t[1] & 0x80 != 0;
+    let unit_start = t[1] & 0x40 != 0;
+    let scrambled = t[3] & 0xC0 != 0;
+    let has_payload = t[3] & 0x10 != 0;
+    if t[0] != SYNC || error || !unit_start || scrambled || !has_payload {
+        return None;
+    }
+    let mut payload = 4;
+    if t[3] & 0x20 != 0 {
+        payload += 1 + usize::from(t[4]);
+    }
+    let pes = t.get(payload..payload + 14)?;
+    if pes[..3] != [0, 0, 1] || pes[6] & 0xC0 != 0x80 || pes[7] & 0x80 == 0 {
+        return None;
+    }
+    let kind = match pes[3] {
+        0xE0..=0xEF | 0xFD => EsKind::Video,
+        0xC0..=0xDF => EsKind::Audio,
+        0xBD => EsKind::Other,
+        _ => return None,
+    };
+    let b = &pes[9..14];
+    if b[0] & 1 == 0 || b[2] & 1 == 0 || b[4] & 1 == 0 {
+        return None;
+    }
+    let pts = (i64::from(b[0] >> 1) & 0x07) << 30
+        | i64::from(b[1]) << 22
+        | i64::from(b[2] >> 1) << 15
+        | i64::from(b[3]) << 7
+        | i64::from(b[4] >> 1);
+    Some(Pes { pid: u16::from(t[1] & 0x1F) << 8 | u16::from(t[2]), kind, pts })
+}
+
+/// Read `size` bytes from the packet boundary at or before `pos`.
+fn ts_window<R: Read + Seek>(
+    r: &mut R,
+    pos: u64,
+    size: u64,
+    len: u64,
+    layout: (usize, usize),
+) -> Option<Vec<u8>> {
+    let start = pos - pos % layout.0 as u64;
+    read_body(r, start, size.min(len - start))
+}
+
+/// From the first frame to the start of the last one (one frame short of what a player
+/// shows; it does not matter for ending an item).
+///
+/// Glued recordings restart or jump their timestamps somewhere in the middle, and then
+/// the ends say nothing about the length. So the timestamps must go steadily forward inside
+/// every window read and from one point checked to the next, and the result must agree
+/// with the file size at the bitrate seen at the ends; otherwise `None`, since a duration
+/// that is too short would end the item early.
+fn mpeg_ts<R: Read + Seek>(r: &mut R, len: u64) -> Option<u64> {
+    let head = read_body(r, 0, len.min(TS_END_WINDOW))?;
+    let layout = ts_layout(&head)?;
+    let first = pes_starts(&head, layout);
+    // The timing stream: the first video one, else audio, else any.
+    let best = first.iter().map(|p| p.kind).min()?;
+    let pid = first.iter().find(|p| p.kind == best)?.pid;
+    let base = first.iter().find(|p| p.pid == pid)?.pts;
+    // Relative to `base`, signed: the counter may wrap, and B-frames come out of order.
+    let rel = |pts: i64| {
+        let d = (pts - base).rem_euclid(PTS_WRAP);
+        if d >= PTS_WRAP / 2 { d - PTS_WRAP } else { d }
+    };
+    // In file order; `None` if they jump inside the window.
+    let times = |pes: &[Pes]| {
+        let t: Vec<i64> = pes.iter().filter(|p| p.pid == pid).map(|p| rel(p.pts)).collect();
+        t.windows(2).all(|w| (-MAX_BACK..=MAX_GAP).contains(&(w[1] - w[0]))).then_some(t)
+    };
+    let span = |t: &Vec<i64>| t.iter().max().zip(t.iter().min()).map_or(0, |(a, b)| a - b);
+
+    let start: Vec<i64> = times(&first)?;
+    let tail = ts_window(r, len.saturating_sub(TS_END_WINDOW), TS_END_WINDOW, len, layout)?;
+    let end: Vec<i64> = times(&pes_starts(&tail, layout))?;
+    let (from, to) = (*start.iter().min()?, *end.iter().max()?);
+    let ticks = to - from;
+    if ticks <= 0 {
+        return None;
+    }
+
+    if len > 4 * TS_END_WINDOW {
+        let mut last = from;
+        for k in 1..=TS_SAMPLES {
+            let pos = len / (TS_SAMPLES + 1) * k;
+            let buf = ts_window(r, pos, TS_SAMPLE, len, layout)?;
+            let Some(&t) = times(&pes_starts(&buf, layout))?.first() else { continue };
+            if t < last - MAX_BACK || t > to + MAX_BACK {
+                return None;
+            }
+            last = t;
+        }
+    }
+
+    let seen_ticks = span(&start) + span(&end);
+    let seen_bytes = (head.len() + tail.len()) as u64;
+    if seen_ticks > 0 {
+        let estimate = u128::from(len) * seen_ticks as u128 / u128::from(seen_bytes);
+        if ticks as u128 > 3 * estimate {
+            return None;
+        }
+    }
+    u64::try_from(ticks * 1000 / TICKS_PER_SECOND).ok().filter(|ms| *ms > 0)
+}
+
 // ---- helpers ---------------------------------------------------------------------------
 
 fn read_u8<R: Read>(r: &mut R) -> Option<u8> {
@@ -595,5 +751,129 @@ mod tests {
         assert_eq!(parse(&avi(&[])), None);
         let f = avi(&[avih(40_000, 250)]);
         assert_eq!(parse(&f[..30]), None);
+    }
+
+    // -- MPEG-TS builders --
+
+    const VIDEO: u16 = 0x100;
+    const AUDIO: u16 = 0x101;
+    const SECOND: u64 = 90_000;
+
+    fn pts_bytes(pts: u64) -> [u8; 5] {
+        [
+            0x21 | (((pts >> 30) as u8 & 0x07) << 1),
+            (pts >> 22) as u8,
+            (((pts >> 15) as u8) << 1) | 1,
+            (pts >> 7) as u8,
+            ((pts as u8) << 1) | 1,
+        ]
+    }
+
+    /// One 188-byte packet starting a PES of `stream_id` with this PTS.
+    fn pes_packet(pid: u16, stream_id: u8, pts: u64) -> Vec<u8> {
+        let mut p = vec![0x47, 0x40 | (pid >> 8) as u8, pid as u8, 0x10];
+        p.extend([0, 0, 1, stream_id, 0, 0, 0x80, 0x80, 5]);
+        p.extend(pts_bytes(pts));
+        p.resize(188, 0xFF);
+        p
+    }
+
+    /// A packet of the null PID (stuffing).
+    fn null_packet() -> Vec<u8> {
+        let mut p = vec![0x47, 0x1F, 0xFF, 0x10];
+        p.resize(188, 0xFF);
+        p
+    }
+
+    /// Video frames every 40 ms with audio beside them, `ms` long, starting at `pts0`;
+    /// `filler` null packets after each frame make the file bigger.
+    fn ts(pts0: u64, ms: u64, filler: usize) -> Vec<u8> {
+        let mut f = Vec::new();
+        for i in 0..=ms / 40 {
+            let pts = (pts0 + i * 3600) % (1 << 33);
+            f.extend(pes_packet(VIDEO, 0xE0, pts));
+            f.extend(pes_packet(AUDIO, 0xC0, pts));
+            for _ in 0..filler {
+                f.extend(null_packet());
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn mpeg_ts_duration_from_the_timestamps() {
+        // From the first frame to the start of the last one.
+        assert_eq!(parse(&ts(10 * SECOND, 60_000, 0)), Some(60_000));
+        // Bigger than the windows that are read at both ends.
+        let big = ts(SECOND, 600_000, 2);
+        assert!(big.len() > 3 << 20);
+        assert_eq!(parse(&big), Some(600_000));
+    }
+
+    #[test]
+    fn m2ts_packets_have_a_4_byte_prefix() {
+        let plain = ts(SECOND, 30_000, 0);
+        let m2ts: Vec<u8> =
+            plain.chunks(188).flat_map(|p| [&[0, 0, 0, 0][..], p].concat()).collect();
+        assert_eq!(parse(&m2ts), Some(30_000));
+    }
+
+    #[test]
+    fn mpeg_ts_timestamps_may_wrap_around() {
+        let start = (1 << 33) - 5 * SECOND;
+        assert_eq!(parse(&ts(start, 20_000, 0)), Some(20_000));
+    }
+
+    #[test]
+    fn mpeg_ts_b_frames_out_of_order() {
+        // Display order 0, 3, 1, 2, …: the first PES is not the earliest frame.
+        let mut f = Vec::new();
+        for i in [0u64, 3, 1, 2, 6, 4, 5, 9, 7, 8] {
+            f.extend(pes_packet(VIDEO, 0xE0, SECOND + i * 9000));
+        }
+        assert_eq!(parse(&f), Some(900));
+    }
+
+    #[test]
+    fn mpeg_ts_audio_only() {
+        let f: Vec<u8> = (0..=50).flat_map(|i| pes_packet(AUDIO, 0xC0, i * 9000)).collect();
+        assert_eq!(parse(&f), Some(5_000));
+    }
+
+    /// Recordings glued together restart their timestamps: the difference of the ends
+    /// means nothing then. Better no duration than one that ends the video early.
+    #[test]
+    fn mpeg_ts_with_a_timestamp_jump_gives_none() {
+        let mut restarted = ts(100 * SECOND, 300_000, 2);
+        restarted.extend(ts(SECOND, 300_000, 2));
+        assert_eq!(parse(&restarted), None);
+        let mut jumped = ts(SECOND, 300_000, 2);
+        jumped.extend(ts(5 * 3600 * SECOND, 300_000, 2));
+        assert_eq!(parse(&jumped), None);
+        // A short recording glued before a long one: the restart is inside the first
+        // window, and both ends alone would give the length of the long one.
+        let mut short_first = ts(SECOND, 30_000, 0);
+        short_first.extend(ts(SECOND, 600_000, 2));
+        assert_eq!(parse(&short_first), None);
+        let mut short_last = ts(SECOND, 600_000, 2);
+        short_last.extend(ts(SECOND, 30_000, 0));
+        assert_eq!(parse(&short_last), None);
+    }
+
+    #[test]
+    fn not_quite_mpeg_ts_gives_none() {
+        let mut bad_sync = ts(SECOND, 10_000, 0);
+        bad_sync[188] = 0;
+        assert_eq!(parse(&bad_sync), None);
+        assert_eq!(parse(&[0x47; 100]), None);
+        // Packets without timestamps.
+        let nulls: Vec<u8> = (0..100).flat_map(|_| null_packet()).collect();
+        assert_eq!(parse(&nulls), None);
+        // Scrambled packets are not read.
+        let mut scrambled = ts(SECOND, 10_000, 0);
+        for p in scrambled.chunks_mut(188) {
+            p[3] |= 0x80;
+        }
+        assert_eq!(parse(&scrambled), None);
     }
 }
