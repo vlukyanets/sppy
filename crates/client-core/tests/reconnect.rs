@@ -50,10 +50,7 @@ async fn closed_player_not_reopened_after_reconnect() {
     let proxy = Proxy::start(server.local_addr).await;
     let a = host(&server, FakeConfig::default()).await;
     let launcher = sppy_player::fake::FakeLauncher::new(FakeConfig::default());
-    let handle = sppy_client_core::api::spawn_client(
-        sppy_client_core::config::ClientConfig { nickname: "bob".into(), ..Default::default() },
-        launcher.clone(),
-    );
+    let handle = sppy_client_core::api::spawn_client(config("bob"), launcher.clone());
     let b = Peer { handle, launcher };
     b.send(UiCommand::Connect {
         address: format!("sppy://{}/{}", proxy.addr, server.invite_token()),

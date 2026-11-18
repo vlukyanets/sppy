@@ -50,6 +50,9 @@ pub struct ClientConfig {
     pub local_media: Vec<PathBuf>,
     /// Preferred subtitle languages, most wanted first (e.g. `["ru", "en"]`).
     pub subtitle_languages: Vec<String>,
+    /// Sites whose links others add play without asking, besides the well-known video
+    /// sites (see [`crate::media::KNOWN_VIDEO_SITES`]).
+    pub trusted_sites: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_dir: Option<PathBuf>,
     pub cache_limit_gb: u64,
@@ -81,6 +84,7 @@ impl Default for ClientConfig {
             prefetch_next: true,
             local_media: Vec::new(),
             subtitle_languages: Vec::new(),
+            trusted_sites: Vec::new(),
             cache_dir: None,
             cache_limit_gb: 20,
             servers: Vec::new(),

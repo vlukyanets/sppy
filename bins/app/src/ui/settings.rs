@@ -71,6 +71,23 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 }
             });
 
+            if !c.trusted_sites.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Links that play without asking:")
+                        .on_hover_text("Besides YouTube, Vimeo, Twitch and other video sites");
+                    let mut remove = None;
+                    for (i, site) in c.trusted_sites.iter().enumerate() {
+                        if ui.small_button(format!("{site} ✕")).on_hover_text("Ask again").clicked()
+                        {
+                            remove = Some(i);
+                        }
+                    }
+                    if let Some(i) = remove {
+                        c.trusted_sites.remove(i);
+                    }
+                });
+            }
+
             ui.heading("My media folders");
             ui.weak(
                 "Videos here play from your disk instead of being downloaded. \
@@ -228,6 +245,9 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     app.ui.settings_open = open;
     if save || restart {
         app.save_config();
+    }
+    if save {
+        app.send(UiCommand::SetTrustedSites(app.config.trusted_sites.clone()));
     }
     if save || rescan {
         app.apply_media_folders(rescan);

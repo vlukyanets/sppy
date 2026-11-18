@@ -14,7 +14,7 @@ use sppy_sync::{
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
 
-use crate::api::{ConnState, ServerFolders, Snapshot, UiCommand, UiEvent};
+use crate::api::{ConnState, LinkQuestion, ServerFolders, Snapshot, UiCommand, UiEvent};
 use crate::cache::MediaCache;
 use crate::config::{ClientConfig, DeliveryMode};
 use crate::connection::{AuthToken, ConnEvent, ConnectionHandle, spawn_connection_at};
@@ -120,6 +120,8 @@ pub(crate) struct Session<L: PlayerLauncher> {
     index: IndexTask,
     /// Files chosen by hand per item.
     overrides: std::collections::HashMap<ItemId, std::path::PathBuf>,
+    /// Links to untrusted sites the user allowed.
+    allowed_links: std::collections::HashSet<ItemId>,
     /// The user closed the player: do not reopen it on reconnect.
     player_closed_by_user: bool,
 }
@@ -190,6 +192,7 @@ impl<L: PlayerLauncher> Session<L> {
             http,
             index,
             overrides: Default::default(),
+            allowed_links: Default::default(),
             player_closed_by_user: false,
         }
     }
@@ -363,6 +366,22 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::ChooseLocalFile { item_id, path } => {
                 self.choose_local_file(item_id, path).await
             }
+            UiCommand::AllowLink(item_id) => {
+                self.allowed_links.insert(item_id);
+                self.reload_asked_link().await;
+            }
+            UiCommand::SkipLink(item_id) => {
+                let Some(q) = self.snap.link_question.take_if(|q| q.item_id == item_id) else {
+                    return;
+                };
+                self.set_status_forced(MediaStatus::Failed {
+                    message: format!("Skipped the link to {}", q.site),
+                });
+            }
+            UiCommand::SetTrustedSites(sites) => {
+                self.config.trusted_sites = sites;
+                self.reload_asked_link().await;
+            }
         }
     }
 
@@ -372,6 +391,7 @@ impl<L: PlayerLauncher> Session<L> {
         self.media = MediaState::default();
         self.stream_fallback.clear();
         self.overrides.clear();
+        self.allowed_links.clear();
         self.session_token = None;
     }
 
@@ -543,6 +563,7 @@ impl<L: PlayerLauncher> Session<L> {
         self.cancel_stale_download(wanted);
         let Some(id) = wanted else {
             self.media = MediaState::default();
+            self.snap.link_question = None;
             return;
         };
         let Some(item) = self.item(id) else { return };
@@ -556,6 +577,31 @@ impl<L: PlayerLauncher> Session<L> {
         }
         let Some(resolved) = self.resolve(&item) else { return };
         self.start_item(id, resolved).await;
+    }
+
+    /// The link asked about may be opened now: resolve the current item again.
+    async fn reload_asked_link(&mut self) {
+        let Some(id) = self.snap.link_question.as_ref().map(|q| q.item_id) else { return };
+        if self.media.item != Some(id) {
+            return;
+        }
+        if let Some(item) = self.item(id)
+            && let Some(resolved) = self.resolve(&item)
+            && !matches!(resolved, Resolved::Ask { .. })
+        {
+            self.start_item(id, resolved).await;
+        }
+    }
+
+    /// Someone else's link to a site I have not trusted: ask first, since the player
+    /// would connect to that site (and show it my address).
+    fn needs_asking(&self, item: &Item) -> Option<String> {
+        let Source::Url { url } = &item.source else { return None };
+        if Some(item.added_by) == self.snap.me || self.allowed_links.contains(&item.item_id) {
+            return None;
+        }
+        let site = crate::media::link_site(url).unwrap_or_else(|| url.clone());
+        (!crate::media::is_trusted_site(&site, &self.config.trusted_sites)).then_some(site)
     }
 
     fn item(&self, id: ItemId) -> Option<Item> {
@@ -781,6 +827,12 @@ impl<L: PlayerLauncher> Session<L> {
                 return Some(Resolved::Wait);
             }
         }
+        if let Source::Url { url } = &item.source
+            && crate::media::is_allowed_url(url)
+            && let Some(site) = self.needs_asking(item)
+        {
+            return Some(Resolved::Ask { site });
+        }
         Some(match stream_source(base, item, token) {
             Resolved::Stream { media, .. } if matches!(item.source, Source::File { .. }) => {
                 Resolved::Stream { media, subtitles: self.subtitle_sources(item, base, token) }
@@ -829,7 +881,23 @@ impl<L: PlayerLauncher> Session<L> {
     }
 
     async fn start_item(&mut self, id: ItemId, resolved: Resolved) {
+        self.snap.link_question = None;
         let (media, subs, delivery) = match resolved {
+            Resolved::Ask { site } => {
+                self.media = MediaState { item: Some(id), ..MediaState::default() };
+                let added_by = self
+                    .item(id)
+                    .and_then(|i| {
+                        let room = self.snap.room.as_ref()?;
+                        Some(crate::notice::nickname(room, i.added_by))
+                    })
+                    .unwrap_or_default();
+                self.snap.link_question =
+                    Some(LinkQuestion { item_id: id, site: site.clone(), added_by });
+                self.send_status();
+                self.osd(&format!("A link to {site}: open it from the sppy window")).await;
+                return;
+            }
             Resolved::Stream { media, subtitles } => (media, subtitles, Delivery::Stream),
             Resolved::Local { path, subtitles } => {
                 (MediaSource::Path(path), subtitles, Delivery::Local)

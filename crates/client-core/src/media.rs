@@ -13,6 +13,8 @@ pub enum Resolved {
     Local { path: PathBuf, subtitles: Vec<MediaSource> },
     /// Not playable yet (waiting for a download).
     Wait,
+    /// Someone else's link to a site not trusted yet: ask before the player connects to it.
+    Ask { site: String },
     /// Not decided yet: a local copy may exist, but the item's fingerprint (or the scan of
     /// my folders) is still missing.
     Identify,
@@ -26,6 +28,37 @@ pub enum Resolved {
 pub fn is_allowed_url(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+/// Video sites whose links play without asking (with their subdomains).
+pub const KNOWN_VIDEO_SITES: &[&str] = &[
+    "youtube.com",
+    "youtu.be",
+    "vimeo.com",
+    "twitch.tv",
+    "dailymotion.com",
+    "rutube.ru",
+    "vkvideo.ru",
+    "bilibili.com",
+    "soundcloud.com",
+];
+
+/// The site a link leads to (lowercase host), as the player will see it.
+pub fn link_site(url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(url.trim()).ok()?;
+    Some(url.host_str()?.trim_end_matches('.').to_ascii_lowercase()).filter(|h| !h.is_empty())
+}
+
+/// Whether links to `site` play without asking: a known video site, one the user trusts,
+/// or a subdomain of either.
+pub fn is_trusted_site(site: &str, trusted: &[String]) -> bool {
+    let site = site.to_ascii_lowercase();
+    let covers = |domain: &str| {
+        let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        !domain.is_empty()
+            && (site == domain || site.strip_suffix(&domain).is_some_and(|sub| sub.ends_with('.')))
+    };
+    KNOWN_VIDEO_SITES.iter().any(|d| covers(d)) || trusted.iter().any(|d| covers(d))
 }
 
 /// What the UI sends for a typed link: `youtube.com/…` becomes `https://youtube.com/…`.
@@ -204,6 +237,37 @@ mod tests {
         let ok =
             stream_source("http://h:1", &item(Source::Url { url: "HTTP://x/y".into() }, 0), "t");
         assert!(matches!(ok, Resolved::Stream { .. }));
+    }
+
+    #[test]
+    fn link_site_is_the_host_the_player_connects_to() {
+        assert_eq!(
+            link_site("https://www.YouTube.com/watch?v=x").as_deref(),
+            Some("www.youtube.com")
+        );
+        assert_eq!(link_site(" http://example.org:8080/a ").as_deref(), Some("example.org"));
+        // What comes before `@` is a user name, not the site.
+        assert_eq!(
+            link_site("https://youtube.com@evil.example/v").as_deref(),
+            Some("evil.example")
+        );
+        assert_eq!(link_site("https://203.0.113.5/v").as_deref(), Some("203.0.113.5"));
+        assert_eq!(link_site("https://[2001:db8::1]/v").as_deref(), Some("[2001:db8::1]"));
+        assert_eq!(link_site("not a link"), None);
+    }
+
+    #[test]
+    fn known_and_trusted_sites_with_their_subdomains() {
+        let trusted = vec!["Example.org".to_owned()];
+        for ok in ["youtube.com", "m.youtube.com", "youtu.be", "example.org", "cdn.example.org"] {
+            assert!(is_trusted_site(ok, &trusted), "{ok}");
+        }
+        for ask in
+            ["notyoutube.com", "youtube.com.evil.example", "example.org.evil", "evil.example"]
+        {
+            assert!(!is_trusted_site(ask, &trusted), "{ask}");
+        }
+        assert!(!is_trusted_site("example.org", &[]));
     }
 
     #[test]

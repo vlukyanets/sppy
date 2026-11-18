@@ -10,8 +10,13 @@ use sppy_player::fake::{FakeConfig, FakeLauncher};
 use sppy_proto::*;
 use sppy_server::ServerHandle;
 
+/// Links of [`url`] play without asking.
 pub fn config(nick: &str) -> ClientConfig {
-    ClientConfig { nickname: nick.into(), ..ClientConfig::default() }
+    ClientConfig {
+        nickname: nick.into(),
+        trusted_sites: vec!["example.invalid".into()],
+        ..ClientConfig::default()
+    }
 }
 
 thread_local! {

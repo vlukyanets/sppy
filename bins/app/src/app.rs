@@ -159,6 +159,15 @@ impl SppyApp {
         self.save_config();
     }
 
+    /// Links to `site` play without asking from now on.
+    pub fn trust_site(&mut self, site: &str) {
+        if !self.config.trusted_sites.iter().any(|s| s.eq_ignore_ascii_case(site)) {
+            self.config.trusted_sites.push(site.to_owned());
+            self.save_config();
+        }
+        self.send(UiCommand::SetTrustedSites(self.config.trusted_sites.clone()));
+    }
+
     pub fn save_config(&mut self) {
         if let Err(e) = self.config.save(&self.paths.config_file) {
             self.push_log(LogKind::Error, e.to_string());

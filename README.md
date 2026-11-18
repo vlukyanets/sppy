@@ -45,6 +45,12 @@ timestamps of MPEG-TS/M2TS files), so this happens
 even if nobody has a player open. For links and other formats the room moves on once every
 participant's player has reached the end.
 
+A link someone else added plays right away if it leads to a well-known video site
+(YouTube, Vimeo, Twitch, Dailymotion, Rutube, VK Video, Bilibili, SoundCloud). For any
+other site the app asks first, since your player would connect to it: **Play** once,
+**Always allow** the site (listed in Settings, where ✕ takes it back), or **Skip** and let
+the room go on without you. Only `http` and `https` links are ever opened.
+
 ## Headless server
 
 ```sh

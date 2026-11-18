@@ -67,6 +67,22 @@ pub enum UiCommand {
         path: PathBuf,
     },
     ClearCache,
+    /// Open this item's link (see [`Snapshot::link_question`]).
+    AllowLink(ItemId),
+    /// Do not open this item's link; the room goes on without me.
+    SkipLink(ItemId),
+    /// Sites whose links play without asking (saved by the app).
+    SetTrustedSites(Vec<String>),
+}
+
+/// Someone else's link to a site not trusted yet is the current item: open it or not?
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkQuestion {
+    pub item_id: ItemId,
+    /// The site the player would connect to.
+    pub site: String,
+    /// Who added it.
+    pub added_by: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -119,6 +135,7 @@ pub struct Snapshot {
     pub local: LocalStatus,
     /// `server_time − local_time` relative to [`ClientHandle::epoch`].
     pub server_offset_ms: Option<i64>,
+    pub link_question: Option<LinkQuestion>,
 }
 
 impl Snapshot {

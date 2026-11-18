@@ -42,8 +42,8 @@ pub fn status_line(app: &mut SppyApp, ui: &mut egui::Ui, _snap: &Snapshot) {
     });
 }
 
-/// Things that need attention: the player could not start, the room is waiting,
-/// the host has no media folders.
+/// Things that need attention: the player could not start, a link to an unknown site,
+/// the room is waiting, the host has no media folders.
 pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     if let Some(problem) = app.ui.player_problem.clone() {
         egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -54,6 +54,32 @@ pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 }
                 if ui.button("Try again").clicked() {
                     app.restart_player();
+                }
+            });
+        });
+    }
+    if let Some(q) = &snap.link_question {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.colored_label(
+                YELLOW,
+                format!(
+                    "{} added a link to {}. Your player will connect to that site.",
+                    q.added_by, q.site
+                ),
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Play").on_hover_text("Open this link once").clicked() {
+                    app.send(UiCommand::AllowLink(q.item_id));
+                }
+                if ui
+                    .button(format!("Always allow {}", q.site))
+                    .on_hover_text("Open links to this site without asking (Settings)")
+                    .clicked()
+                {
+                    app.trust_site(&q.site);
+                }
+                if ui.button("Skip").on_hover_text("The room goes on without you").clicked() {
+                    app.send(UiCommand::SkipLink(q.item_id));
                 }
             });
         });

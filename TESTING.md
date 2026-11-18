@@ -43,6 +43,10 @@ Run each instance with its own home so they do not share config and cache:
 4. Subtitles appear in both players.
 5. Reorder (▲▼), add a second file, double-click it → both switch; remove an item.
 6. Chat in both directions; messages and notices also appear as OSD in mpv.
+   B: add a link to an unknown site (e.g. a direct `.mp4` on some server) → B plays it,
+   A sees "B added a link to …" with Play / Always allow / Skip; mpv shows a hint. Skip →
+   the room plays on without A. Always allow → it plays and the site is listed in
+   Settings; ✕ there and Save → asked again next time. A YouTube link plays at once.
 7. A: Host → *Only the host*; B pauses in mpv → it snaps back with "No permission…".
    Switch to *Selected participants*, tick `ctrl` for B → B can pause again.
 8. B: switch to **Preload**, select another item → progress bar in Participants, then
