@@ -64,6 +64,11 @@ impl TestClient {
         self.ws.send(Message::text(encode(&msg))).await.unwrap();
     }
 
+    /// Send; false when the server has already closed the connection.
+    pub async fn try_send(&mut self, msg: ClientMsg) -> bool {
+        self.ws.send(Message::text(encode(&msg))).await.is_ok()
+    }
+
     pub async fn send_raw(&mut self, text: &str) {
         self.ws.send(Message::text(text.to_owned())).await.unwrap();
     }

@@ -75,6 +75,11 @@ proxy use `sppys://…`. Connecting with the host token instead
 room and manage the shared folders in ⚙ Settings → *Server folders*. Keep that link private. Other commands: `rotate-invite`, `rotate-host-token`.
 State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
 
+Built-in limits keep one participant from spoiling the room for the others: the playlist
+holds up to 1000 items, chat allows a burst of 10 messages and then one a second, a
+connection that floods the server with messages or stops reading is dropped, and at
+most 32 connections may wait to join at once (the rest get HTTP 503).
+
 ## Delivery modes
 
 - **Stream** — mpv plays the file from the server over HTTP (Range requests).

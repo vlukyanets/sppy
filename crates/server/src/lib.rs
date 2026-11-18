@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 
 pub use config::{MediaRoot, ServerConfig};
 pub use error::ServerError;
+pub use http::{MAX_MESSAGE_BURST, MAX_PENDING_CONNECTIONS};
 
 use crate::clock::ServerClock;
 use crate::hub::{Hub, HubInput, SharedTokens};
@@ -137,6 +138,7 @@ pub async fn start_with(
         ping_timeout_ms: config.ping_timeout_ms,
         next_conn_id: Arc::new(AtomicU64::new(1)),
         media,
+        pending: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_CONNECTIONS)),
     };
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let app = http::router(state);
