@@ -103,7 +103,7 @@ pub struct MpvPlayer {
 }
 
 /// mpv's JSON IPC only carries UTF-8. A path that is not valid UTF-8 is opened through a
-/// UTF-8-named symlink in the temp dir (Unix); the link is kept until the next load.
+/// UTF-8-named symlink next to the IPC sockets (Unix); the link is kept until the next load.
 fn source_arg(src: &MediaSource, links: &mut Vec<PathBuf>) -> PlayerResult<String> {
     match src {
         MediaSource::Url(u) => Ok(u.clone()),
@@ -120,7 +120,8 @@ fn utf8_alias(path: &std::path::Path, links: &mut Vec<PathBuf>) -> PlayerResult<
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let link = std::env::temp_dir().join(format!("sppy-media-{}-{n}.{ext}", std::process::id()));
+    let name = format!("sppy-media-{}-{n}.{ext}", std::process::id());
+    let link = super::ipc::socket_dir().join(name);
     std::os::unix::fs::symlink(path, &link)
         .map_err(|e| PlayerError::Ipc(format!("cannot alias {}: {e}", path.display())))?;
     links.push(link.clone());
@@ -361,5 +362,30 @@ impl Player for MpvPlayer {
 
     async fn next_event(&mut self) -> Option<PlayerEvent> {
         self.events.recv().await
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::ffi::OsStrExt;
+
+    use super::*;
+
+    /// The link shows where the file is, so it goes to the per-user runtime dir (where the
+    /// IPC sockets are), not to the temp dir every local user can list.
+    #[test]
+    fn non_utf8_path_is_aliased_in_the_private_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = std::ffi::OsStr::from_bytes(b"caf\xe9.mkv");
+        let file = dir.path().join(name);
+        std::fs::write(&file, b"x").unwrap();
+        let mut links = Vec::new();
+        let arg = source_arg(&MediaSource::Path(file.clone()), &mut links).unwrap();
+        let link = PathBuf::from(&arg);
+        assert_eq!(link.parent(), Some(super::super::ipc::socket_dir().as_path()));
+        assert_eq!(std::fs::read_link(&link).unwrap(), file);
+        assert!(arg.ends_with(".mkv"));
+        remove_links(&mut links);
+        assert!(!link.exists());
     }
 }
