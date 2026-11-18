@@ -125,9 +125,10 @@ pub fn stream_source(base: &str, item: &Item, session_token: &str) -> Resolved {
         Source::Url { url } if !is_allowed_url(url) => {
             Resolved::Rejected { reason: format!("Only http(s) links can be played: {url}") }
         }
-        Source::Url { url } => {
-            Resolved::Stream { media: MediaSource::Url(url.clone()), subtitles: Vec::new() }
-        }
+        Source::Url { url } => Resolved::Stream {
+            media: MediaSource::Url(url.trim().to_owned()),
+            subtitles: Vec::new(),
+        },
     }
 }
 
@@ -173,6 +174,17 @@ mod tests {
             stream_source("http://h:1", &item(Source::Url { url: "https://y/v".into() }, 0), "t");
         assert_eq!(
             r,
+            Resolved::Stream { media: MediaSource::Url("https://y/v".into()), subtitles: vec![] }
+        );
+    }
+
+    /// The player gets exactly the link that was checked: with the spaces around it,
+    /// mpv would take it for a file name.
+    #[test]
+    fn url_is_played_without_surrounding_whitespace() {
+        let i = item(Source::Url { url: " \thttps://y/v \n".into() }, 0);
+        assert_eq!(
+            stream_source("http://h:1", &i, "t"),
             Resolved::Stream { media: MediaSource::Url("https://y/v".into()), subtitles: vec![] }
         );
     }
