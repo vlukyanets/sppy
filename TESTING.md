@@ -75,3 +75,14 @@ Run each instance with its own home so they do not share config and cache:
    (✕, confirm) → gone from both. A relative, missing or outside path (`/etc`,
    `/srv/media/..`) shows the reason. With `allow_remote_media_changes = false` the list
    is read-only.
+5. Tailscale names and addresses show no warning. Type `sppy://example.org/x` into the
+   invite link field → a yellow *Not encrypted* note appears under it; `sppys://…` does
+   not show it.
+
+## Manual: behind a TLS proxy
+
+1. Run the server with `listen = "127.0.0.1:8740"` and
+   `public_address = "sppys://<domain>:443"` behind Caddy (see README → Encryption).
+2. `sppy-server print-tokens` prints `sppys://<domain>:443/…` links.
+3. Connect from another machine with that link: no *Not encrypted* badge; streaming,
+   preload and seeking work through the proxy.

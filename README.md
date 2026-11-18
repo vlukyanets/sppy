@@ -73,7 +73,7 @@ path = "/srv/media/movies"
 ```
 
 Invite link: `sppy://mybox.tailnet.ts.net:8740/<invite token>`. Behind a TLS reverse
-proxy use `sppys://…`. Connecting with the host token instead
+proxy use `sppys://…` (see [Encryption](#encryption)). Connecting with the host token instead
 (`sppy://mybox.tailnet.ts.net:8740/<host token>`) makes you the host: you control the
 room and manage the shared folders in ⚙ Settings → *Server folders*. Keep that link private. Other commands: `rotate-invite`, `rotate-host-token`.
 State (tokens, playlist, position) lives in `~/.local/share/sppy/server/`.
@@ -82,6 +82,45 @@ Built-in limits keep one participant from spoiling the room for the others: the 
 holds up to 1000 items, chat allows a burst of 10 messages and then one a second, a
 connection that floods the server with messages or stops reading is dropped, and at
 most 32 connections may wait to join at once (the rest get HTTP 503).
+
+## Encryption
+
+sppy itself does not encrypt: an `sppy://` link carries the token, the chat and the video
+in the clear. That is fine on a home network and over Tailscale or another VPN, which
+encrypt by themselves. Over the open internet the app shows *⚠ Not encrypted*; put the
+server behind a TLS reverse proxy and use `sppys://` links there.
+
+With [Caddy](https://caddyserver.com), which gets the certificate by itself:
+
+```
+watch.example.org {
+    reverse_proxy 127.0.0.1:8740
+}
+```
+
+With nginx (WebSocket upgrade, and no buffering for video):
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8740;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 1h;
+    proxy_buffering off;
+}
+```
+
+In `server.toml` listen only locally, so that nobody bypasses the proxy, and put the
+`sppys://` address into the invite links:
+
+```toml
+listen = "127.0.0.1:8740"
+public_address = "sppys://watch.example.org:443"
+```
+
+Links then look like `sppys://watch.example.org:443/<token>`. The port has to be written
+out: without one, sppy uses 8740.
 
 ## Delivery modes
 

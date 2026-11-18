@@ -78,11 +78,41 @@ impl ServerAddress {
         format!("{scheme}://{}", self.host_port())
     }
 
+    /// Plain `sppy://` to a host that is not on this machine, the local network or a
+    /// Tailscale network: the token, chat and media go over the internet unencrypted.
+    pub fn unencrypted_over_internet(&self) -> bool {
+        !self.secure && !is_private_host(&self.host)
+    }
+
     pub fn to_link(&self) -> String {
         let scheme = if self.secure { "sppys" } else { "sppy" };
         match &self.token {
             Some(t) => format!("{scheme}://{}/{t}", self.host_port()),
             None => format!("{scheme}://{}", self.host_port()),
+        }
+    }
+}
+
+/// This machine, the local network, or a Tailscale network (which encrypts by itself).
+fn is_private_host(host: &str) -> bool {
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            let tailscale = a == 100 && (64..128).contains(&b);
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || tailscale
+        }
+        Ok(IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            let unique_local = first & 0xFE00 == 0xFC00;
+            let link_local = first & 0xFFC0 == 0xFE80;
+            ip.is_loopback() || unique_local || link_local
+        }
+        Err(_) => {
+            let name = host.trim_end_matches('.').to_ascii_lowercase();
+            !name.contains('.')
+                || [".local", ".lan", ".home.arpa", ".internal", ".ts.net"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
         }
     }
 }
@@ -177,6 +207,37 @@ mod tests {
     #[test]
     fn trailing_slash_means_no_token() {
         assert_eq!(parse_address("sppy://h:1/").unwrap().token, None);
+    }
+
+    #[test]
+    fn unencrypted_links_over_the_internet_are_told_apart() {
+        let clear = |link: &str| parse_address(link).unwrap().unencrypted_over_internet();
+        for public in
+            ["sppy://example.org/t", "sppy://203.0.113.7:8740/t", "sppy://[2001:db8::1]/t"]
+        {
+            assert!(clear(public), "{public}");
+        }
+        for private in [
+            "sppy://localhost/t",
+            "sppy://127.0.0.1/t",
+            "sppy://[::1]/t",
+            "sppy://192.168.1.20/t",
+            "sppy://10.1.2.3/t",
+            "sppy://172.20.0.5/t",
+            "sppy://169.254.3.4/t",
+            // Tailscale: its addresses and names travel inside WireGuard.
+            "sppy://100.101.102.103/t",
+            "sppy://[fd7a:115c:a1e0::1]/t",
+            "sppy://box.tailnet-1234.ts.net/t",
+            "sppy://[fe80::1]/t",
+            "sppy://nas/t",
+            "sppy://nas.local/t",
+            "sppy://nas.lan/t",
+            "sppy://nas.home.arpa/t",
+            "sppys://example.org/t",
+        ] {
+            assert!(!clear(private), "{private}");
+        }
     }
 
     #[test]

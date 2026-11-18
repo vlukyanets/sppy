@@ -21,6 +21,19 @@ pub fn state_text(c: &ConnState) -> String {
     }
 }
 
+/// Whether this link would carry the room over the internet unencrypted.
+fn unencrypted(link: &str) -> bool {
+    sppy_common::link::parse_address(link).is_ok_and(|a| a.unencrypted_over_internet())
+}
+
+const UNENCRYPTED: &str = "Not encrypted: the invite token, chat and video cross the internet \
+    readable by anyone on the way. Use an sppys:// link (the server behind a TLS proxy, see \
+    the README) or a VPN such as Tailscale.";
+
+fn unencrypted_badge(ui: &mut egui::Ui) {
+    ui.colored_label(super::YELLOW, "⚠ Not encrypted").on_hover_text(UNENCRYPTED);
+}
+
 fn mode_switch(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let mut mode = snap.local.mode;
     ui.radio_value(&mut mode, DeliveryMode::Stream, "Stream")
@@ -101,16 +114,22 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 if snap.connection == ConnState::Connected { super::GREEN } else { super::YELLOW };
             ui.colored_label(color, "●");
             ui.label(format!("{} as {}", state_text(&snap.connection), app.ui.nickname));
+            if app.host.is_none() && unencrypted(&app.ui.address) {
+                unencrypted_badge(ui);
+            }
             ui.separator();
             mode_switch(app, ui, snap);
             ui.separator();
             if let Some(host) = &app.host {
                 ui.label(format!("Hosting on port {}", host.local_addr.port()));
                 invite_host_choice(app, ui);
-                if let Some(link) = snap.invite_token.as_deref().and_then(|t| app.invite_link(t))
-                    && ui.button("Copy invite link").on_hover_text(&link).clicked()
-                {
-                    ui.ctx().copy_text(link);
+                if let Some(link) = snap.invite_token.as_deref().and_then(|t| app.invite_link(t)) {
+                    if ui.button("Copy invite link").on_hover_text(&link).clicked() {
+                        ui.ctx().copy_text(link.clone());
+                    }
+                    if unencrypted(&link) {
+                        unencrypted_badge(ui);
+                    }
                 }
                 ui.separator();
             }
@@ -139,6 +158,9 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         ui.text_edit_singleline(&mut app.ui.nickname);
         ui.end_row();
     });
+    if unencrypted(&app.ui.address) {
+        ui.add(egui::Label::new(egui::RichText::new(UNENCRYPTED).color(super::YELLOW)).wrap());
+    }
     ui.horizontal(|ui| {
         mode_switch(app, ui, snap);
         ui.separator();
