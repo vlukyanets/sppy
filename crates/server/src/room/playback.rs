@@ -55,7 +55,7 @@ impl Room {
                 NoticeAction::SpeedChanged { speed }
             }
         };
-        self.playback.seq += 1;
+        self.playback_changed();
         self.playback.cause = Some(Cause { participant_id: pid, req_id });
         vec![self.broadcast_playback(), Self::notice(Some(pid), action), Effect::Persist]
     }

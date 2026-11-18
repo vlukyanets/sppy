@@ -88,7 +88,7 @@ impl Room {
         }
         self.playback.hold = None;
         self.playback.at_server_ms = now_ms;
-        self.playback.seq += 1;
+        self.playback_changed();
         self.playback.cause = None;
         vec![self.broadcast_playback(), Self::notice(None, NoticeAction::HoldEnded)]
     }
@@ -107,7 +107,7 @@ impl Room {
             return Vec::new();
         }
         self.playback.at_server_ms = now_ms;
-        self.playback.seq += 1;
+        self.playback_changed();
         self.playback.cause = Some(sppy_proto::Cause { participant_id: pid, req_id });
         vec![self.broadcast_playback(), Self::notice(Some(pid), NoticeAction::HoldEnded)]
     }
@@ -134,7 +134,7 @@ impl Room {
         self.rebase(now_ms, position);
         let hold = Hold { reason: HoldReason::Stalled, waiting_for: stalled };
         self.playback.hold = Some(hold.clone());
-        self.playback.seq += 1;
+        self.playback_changed();
         self.playback.cause = None;
         vec![self.broadcast_playback(), Self::notice(None, NoticeAction::HoldStarted { hold })]
     }
@@ -197,7 +197,7 @@ impl Room {
                 let expected = self.playback.expected_position_ms(now_ms);
                 self.rebase(now_ms, duration.map_or(expected, |d| d.min(expected)));
                 self.playback.paused = true;
-                self.playback.seq += 1;
+                self.playback_changed();
                 self.playback.cause = None;
                 vec![self.broadcast_playback()]
             }

@@ -209,7 +209,7 @@ impl Room {
         self.playback.item_id = next;
         self.playback.position_ms = 0;
         self.playback.at_server_ms = now_ms;
-        self.playback.seq += 1;
+        self.playback_changed();
         self.playback.cause = None;
         match next {
             Some(id) => {

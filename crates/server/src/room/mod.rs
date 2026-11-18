@@ -204,6 +204,16 @@ impl Room {
         })
     }
 
+    /// Every change of the playback state goes through here. Drift measured against the old
+    /// state would be shown until the next measurement, so it is forgotten.
+    fn playback_changed(&mut self) {
+        self.playback.seq += 1;
+        for e in self.progress.values_mut().filter(|e| e.drift_ms.is_some()) {
+            e.drift_ms = None;
+            self.progress_dirty = true;
+        }
+    }
+
     /// Hook for per-item state that must reset on item change (extended later).
     fn on_item_changed(&mut self) {
         self.stalled_since.clear();

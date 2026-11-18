@@ -1226,6 +1226,41 @@ mod v2 {
             .unwrap();
         assert_eq!(entries[0].drift_ms, Some(-42));
     }
+
+    fn progress_batch(effects: &[Effect]) -> Option<Vec<ProgressEntry>> {
+        effects.iter().find_map(|e| match e {
+            Effect::Broadcast { msg: ServerMsg::ProgressBatch { entries } } => {
+                Some(entries.clone())
+            }
+            _ => None,
+        })
+    }
+
+    /// A drift measured before a pause, seek or speed change says nothing about the new
+    /// position: it is forgotten until the participant measures again.
+    #[test]
+    fn playback_change_forgets_measured_drift() {
+        let changes: [fn() -> ClientMsg; 4] = [
+            || ClientMsg::Pause { req_id: 5, position_ms: None },
+            || ClientMsg::Seek { req_id: 5, position_ms: 30_000 },
+            || ClientMsg::SetSpeed { req_id: 5, speed: 1.5 },
+            || ClientMsg::Play { req_id: 5, position_ms: Some(1_000) },
+        ];
+        for change in changes {
+            let (mut r, h, _) = waiting_room();
+            r.command(0, h, ClientMsg::StartWithoutWaiting { req_id: 2 });
+            let drift = ClientMsg::Progress {
+                item_id: ItemId(1),
+                delivery: Delivery::Local,
+                drift_ms: Some(169),
+            };
+            r.command(0, h, drift);
+            assert_eq!(progress_batch(&r.tick(2_000)).unwrap()[0].drift_ms, Some(169));
+            r.command(3_000, h, change());
+            let entries = progress_batch(&r.tick(5_000)).expect("the change is broadcast");
+            assert_eq!(entries[0].drift_ms, None, "after {:?}", change());
+        }
+    }
 }
 
 /// The server ends items itself: by the file's own duration when it knows it, otherwise
