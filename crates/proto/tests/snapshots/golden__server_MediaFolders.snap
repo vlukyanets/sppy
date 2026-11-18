@@ -11,5 +11,9 @@ expression: msg
       "available": true
     }
   ],
-  "editable": true
+  "editable": true,
+  "adding": {
+    "kind": "Within",
+    "root": "/srv"
+  }
 }

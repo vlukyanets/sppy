@@ -205,6 +205,7 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
                     available: true,
                 }],
                 editable: true,
+                adding: FolderAdding::Within { root: "/srv".into() },
             },
         ),
         (

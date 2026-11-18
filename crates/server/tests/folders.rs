@@ -10,27 +10,38 @@ use sppy_server::{MediaRoot, ServerConfig, ServerHandle, StartOptions};
 
 struct Setup {
     _dir: tempfile::TempDir,
-    movies: tempfile::TempDir,
-    series: tempfile::TempDir,
+    /// `media_root` unless a test sets another one; holds `movies` and `series`.
+    base: tempfile::TempDir,
+    movies: PathBuf,
+    series: PathBuf,
     config_file: PathBuf,
     server: ServerHandle,
 }
 
 async fn setup(allow: bool) -> Setup {
+    setup_with(allow, |base| Some(base.to_path_buf())).await
+}
+
+/// A headless server sharing `movies`; folders may be added only inside `media_root`.
+async fn setup_with(allow: bool, media_root: impl FnOnce(&Path) -> Option<PathBuf>) -> Setup {
     let dir = tempfile::tempdir().unwrap();
-    let (movies, series) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    std::fs::write(movies.path().join("Movie.mkv"), b"movie").unwrap();
-    std::fs::write(series.path().join("Episode.mkv"), b"episode").unwrap();
+    let base = tempfile::tempdir().unwrap();
+    let (movies, series) = (base.path().join("movies"), base.path().join("series"));
+    std::fs::create_dir(&movies).unwrap();
+    std::fs::create_dir(&series).unwrap();
+    std::fs::write(movies.join("Movie.mkv"), b"movie").unwrap();
+    std::fs::write(series.join("Episode.mkv"), b"episode").unwrap();
     let config_file = dir.path().join("server.toml");
     std::fs::write(&config_file, "# keep me\nstall_hold_secs = 7\n").unwrap();
     let cfg = ServerConfig {
-        media: vec![MediaRoot { name: "Movies".into(), path: movies.path().to_path_buf() }],
+        media: vec![MediaRoot { name: "Movies".into(), path: movies.clone() }],
         allow_remote_media_changes: allow,
+        media_root: media_root(base.path()),
         ..test_config()
     };
-    let options = StartOptions { config_file: Some(config_file.clone()) };
+    let options = StartOptions { config_file: Some(config_file.clone()), require_media_root: true };
     let server = sppy_server::start_with(cfg, dir.path().join("data"), options).await.unwrap();
-    Setup { _dir: dir, movies, series, config_file, server }
+    Setup { _dir: dir, base, movies, series, config_file, server }
 }
 
 async fn host(s: &Setup) -> TestClient {
@@ -77,10 +88,11 @@ async fn host_sees_the_folders_on_join() {
         ServerMsg::MediaFolders {
             folders: vec![MediaFolder {
                 name: "Movies".into(),
-                path: path_str(s.movies.path()),
+                path: path_str(&s.movies),
                 available: true,
             }],
             editable: true,
+            adding: FolderAdding::Within { root: path_str(s.base.path()) },
         }
     );
     s.server.shutdown().await;
@@ -91,9 +103,8 @@ async fn host_adds_and_removes_folders_and_the_config_keeps_them() {
     let s = setup(true).await;
     let mut h = host(&s).await;
     h.recv_until(is_folders).await;
-    h.send(ClientMsg::AddMediaFolder { req_id: 1, path: path_str(s.series.path()), name: None })
-        .await;
-    let series_name = s.series.path().file_name().unwrap().to_string_lossy().into_owned();
+    h.send(ClientMsg::AddMediaFolder { req_id: 1, path: path_str(&s.series), name: None }).await;
+    let series_name = s.series.file_name().unwrap().to_string_lossy().into_owned();
     let m = h.recv_until(is_folders).await;
     assert_eq!(folder_names(&m), ["Movies".to_owned(), series_name.clone()]);
     let both = vec!["Movies".to_owned(), series_name.clone()];
@@ -104,7 +115,7 @@ async fn host_adds_and_removes_folders_and_the_config_keeps_them() {
     let saved = ServerConfig::from_toml(&text).unwrap();
     assert_eq!(saved.stall_hold_secs, 7);
     assert_eq!(saved.media.len(), 2);
-    assert_eq!(saved.media[1].path, s.series.path());
+    assert_eq!(saved.media[1].path, s.series);
 
     h.send(ClientMsg::RemoveMediaFolder { req_id: 2, name: "Movies".into() }).await;
     let m = h.recv_until(is_folders).await;
@@ -131,21 +142,21 @@ async fn bad_folder_requests_are_refused_with_a_reason() {
         (
             ClientMsg::AddMediaFolder {
                 req_id: 2,
-                path: path_str(&s.series.path().join("missing")),
+                path: path_str(&s.series.join("missing")),
                 name: None,
             },
             2,
             MediaFolderProblem::NotFound,
         ),
         (
-            ClientMsg::AddMediaFolder { req_id: 3, path: path_str(s.movies.path()), name: None },
+            ClientMsg::AddMediaFolder { req_id: 3, path: path_str(&s.movies), name: None },
             3,
             MediaFolderProblem::AlreadyShared,
         ),
         (
             ClientMsg::AddMediaFolder {
                 req_id: 4,
-                path: path_str(s.series.path()),
+                path: path_str(&s.series),
                 name: Some("Movies".into()),
             },
             4,
@@ -170,8 +181,7 @@ async fn guests_cannot_change_folders() {
     let s = setup(true).await;
     let auth = Auth::Invite { token: s.server.invite_token() };
     let (mut g, _) = TestClient::join(s.server.local_addr, auth, "g").await;
-    g.send(ClientMsg::AddMediaFolder { req_id: 1, path: path_str(s.series.path()), name: None })
-        .await;
+    g.send(ClientMsg::AddMediaFolder { req_id: 1, path: path_str(&s.series), name: None }).await;
     let m = g.recv_until(|m| matches!(m, ServerMsg::Denied { .. })).await;
     assert_eq!(m, ServerMsg::Denied { req_id: 1, code: ErrorCode::NotHost });
     s.server.shutdown().await;
@@ -222,4 +232,55 @@ async fn a_link_with_the_host_token_makes_you_the_host() {
     let (_g, welcome) = TestClient::join(s.server.local_addr, auth, "g").await;
     assert!(!welcome.is_host);
     s.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_a_media_root_folders_can_be_removed_but_not_added() {
+    let s = setup_with(true, |_| None).await;
+    let mut h = host(&s).await;
+    let m = h.recv_until(is_folders).await;
+    assert!(matches!(m, ServerMsg::MediaFolders { adding: FolderAdding::NoMediaRoot, .. }));
+    h.send(ClientMsg::AddMediaFolder { req_id: 1, path: path_str(&s.series), name: None }).await;
+    let m = h.recv_until(|m| matches!(m, ServerMsg::Denied { .. })).await;
+    let code = ErrorCode::MediaFolder { problem: MediaFolderProblem::NoMediaRoot };
+    assert_eq!(m, ServerMsg::Denied { req_id: 1, code });
+    h.send(ClientMsg::RemoveMediaFolder { req_id: 2, name: "Movies".into() }).await;
+    let m = h.recv_until(is_folders).await;
+    assert!(folder_names(&m).is_empty());
+    s.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn folders_outside_the_media_root_are_refused() {
+    let base = tempfile::tempdir().unwrap();
+    let inside = base.path().join("Series");
+    std::fs::create_dir(&inside).unwrap();
+    let root = base.path().to_path_buf();
+    let s = setup_with(true, |_| Some(root)).await;
+    let mut h = host(&s).await;
+    h.recv_until(is_folders).await;
+    let outside = [path_str(&s.series), "/".to_owned(), path_str(&inside.join("../.."))];
+    for (i, path) in outside.into_iter().enumerate() {
+        let req_id = i as u32 + 1;
+        h.send(ClientMsg::AddMediaFolder { req_id, path, name: None }).await;
+        let m = h.recv_until(|m| matches!(m, ServerMsg::Denied { .. })).await;
+        let code = ErrorCode::MediaFolder { problem: MediaFolderProblem::OutsideMediaRoot };
+        assert_eq!(m, ServerMsg::Denied { req_id, code });
+    }
+    h.send(ClientMsg::AddMediaFolder { req_id: 10, path: path_str(&inside), name: None }).await;
+    let m = h.recv_until(is_folders).await;
+    assert_eq!(folder_names(&m), ["Movies".to_owned(), "Series".to_owned()]);
+    s.server.shutdown().await;
+}
+
+/// The app's own server shares the app user's folders: no `media_root` needed.
+#[tokio::test]
+async fn the_embedded_server_may_add_anywhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let auth = Auth::Host { token: server.host_token.clone() };
+    let (mut h, _) = TestClient::join(server.local_addr, auth, "h").await;
+    let m = h.recv_until(is_folders).await;
+    assert!(matches!(m, ServerMsg::MediaFolders { adding: FolderAdding::Anywhere, .. }));
+    server.shutdown().await;
 }

@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use sppy_common::folders;
 use sppy_proto::{
-    Auth, ClientMsg, CloseReason, ErrorCode, MediaFolder, MediaFolderProblem, ParticipantId,
-    ServerMsg,
+    Auth, ClientMsg, CloseReason, ErrorCode, FolderAdding, MediaFolder, MediaFolderProblem,
+    ParticipantId, ServerMsg,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -61,10 +61,19 @@ pub struct Folders {
     pub roots: Vec<MediaRoot>,
     /// The host may change them over the protocol.
     pub editable: bool,
+    /// Which folders the host may add.
+    pub adding: Adding,
     /// Where changes made by the host are saved.
     pub config_file: Option<PathBuf>,
     /// Tests: wait this long before hashing.
     pub hash_delay_ms: u64,
+}
+
+/// Which folders of this machine the host may add over the protocol.
+pub enum Adding {
+    Anywhere,
+    Within(PathBuf),
+    NoMediaRoot,
 }
 
 /// Tokens shared between the hub and the server handle.
@@ -213,6 +222,11 @@ impl Hub {
                     ClientMsg::AddMediaFolder { req_id, path, name } => {
                         let result = self.check_change(pid).and_then(|()| {
                             let path = std::path::Path::new(&path);
+                            match &self.folders.adding {
+                                Adding::Anywhere => {}
+                                Adding::Within(root) => folders::check_within(path, root)?,
+                                Adding::NoMediaRoot => Err(MediaFolderProblem::NoMediaRoot)?,
+                            }
                             let root =
                                 folders::new_folder(&self.folders.roots, path, name.as_deref())?;
                             let mut roots = self.folders.roots.clone();
@@ -334,7 +348,14 @@ impl Hub {
                 available: r.path.is_dir(),
             })
             .collect();
-        ServerMsg::MediaFolders { folders, editable: self.folders.editable }
+        let adding = match &self.folders.adding {
+            Adding::Anywhere => FolderAdding::Anywhere,
+            Adding::Within(root) => {
+                FolderAdding::Within { root: root.to_string_lossy().into_owned() }
+            }
+            Adding::NoMediaRoot => FolderAdding::NoMediaRoot,
+        };
+        ServerMsg::MediaFolders { folders, editable: self.folders.editable, adding }
     }
 
     /// Keep the `/media` token set equal to the room's sessions.

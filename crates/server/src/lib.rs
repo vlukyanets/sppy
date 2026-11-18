@@ -75,6 +75,10 @@ pub struct StartOptions {
     /// The config file the server was loaded from: folder changes made by the host are
     /// saved there. Without it they last until the server stops.
     pub config_file: Option<PathBuf>,
+    /// The host may add folders only inside `media_root`, and none without it. For the
+    /// headless server, whose host link may be given to someone other than the machine's
+    /// owner; the app's own server shares its user's folders.
+    pub require_media_root: bool,
 }
 
 /// Start a server: load tokens from `data_dir`, bind `config.listen`, spawn the room hub.
@@ -124,6 +128,11 @@ pub async fn start_with(
         hub::Folders {
             roots: config.media.clone(),
             editable: config.allow_remote_media_changes,
+            adding: match (&config.media_root, options.require_media_root) {
+                (Some(root), _) => hub::Adding::Within(root.clone()),
+                (None, true) => hub::Adding::NoMediaRoot,
+                (None, false) => hub::Adding::Anywhere,
+            },
             config_file: options.config_file,
             hash_delay_ms: config.hash_delay_ms,
         },

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
 use sppy_client_core::netaddr;
 use sppy_common::folders;
-use sppy_proto::MediaFolderProblem;
+use sppy_proto::{FolderAdding, MediaFolderProblem};
 
 use crate::app::{SppyApp, UiState};
 
@@ -283,10 +283,21 @@ fn server_folders(
         ui.weak("Changing them from the app is turned off in the server's server.toml.");
         return;
     }
+    let hint = match &server.adding {
+        FolderAdding::NoMediaRoot => {
+            ui.weak("To share more folders from here, set media_root in the server's server.toml.");
+            return;
+        }
+        FolderAdding::Within { root } => {
+            ui.weak(format!("New folders must be inside {root}"));
+            std::path::Path::new(root).join("Movies").to_string_lossy().into_owned()
+        }
+        FolderAdding::Anywhere => "/srv/media/Movies".to_owned(),
+    };
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.server_folder_path)
-                .hint_text("/srv/media/Movies")
+                .hint_text(hint)
                 .desired_width(220.0),
         );
         ui.add(

@@ -27,6 +27,10 @@ pub struct ServerConfig {
     pub media: Vec<MediaRoot>,
     /// Let the host add and remove shared folders from the app (saved into this file).
     pub allow_remote_media_changes: bool,
+    /// Folders added from the app must be inside this one. The headless server refuses
+    /// to add any without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_root: Option<PathBuf>,
     /// Undocumented; tests delay the background fingerprint pass with it.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "is_zero")]
@@ -58,6 +62,7 @@ impl Default for ServerConfig {
             resume_buffer_secs: 10,
             media: Vec::new(),
             allow_remote_media_changes: true,
+            media_root: None,
             hash_delay_ms: 0,
             ping_timeout_ms: DEFAULT_PING_TIMEOUT_MS,
         }

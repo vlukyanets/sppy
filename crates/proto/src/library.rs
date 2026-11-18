@@ -31,6 +31,19 @@ pub struct MediaFolder {
     pub available: bool,
 }
 
+/// Which folders of the server's machine the host may add from the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum FolderAdding {
+    Anywhere,
+    /// Only this folder and the folders inside it (`media_root` in `server.toml`).
+    Within {
+        root: String,
+    },
+    /// The server owner has not set `media_root`, so none.
+    NoMediaRoot,
+}
+
 impl Subtitle {
     /// The extension is short and only letters and digits: clients put it into file names.
     pub fn is_well_formed(&self) -> bool {

@@ -183,6 +183,7 @@ fn hostile_script() -> Vec<Message> {
         text(&ServerMsg::MediaFolders {
             folders: vec![MediaFolder { name: "../".into(), path: "/".into(), available: true }],
             editable: true,
+            adding: FolderAdding::Within { root: "x".repeat(100_000) },
         }),
         text(&ServerMsg::InviteToken { token: String::new() }),
         text(&ServerMsg::Denied {

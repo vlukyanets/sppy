@@ -65,7 +65,9 @@ name = "Movies"
 path = "/srv/media/movies"
 
 # The host can add and remove folders from the app (Settings → Server folders);
-# they are saved into this file. Set to false to allow changes only here.
+# they are saved into this file. Folders can be added only inside media_root, and
+# none without it. Set allow_remote_media_changes to false to allow changes only here.
+# media_root = "/srv/media"
 # allow_remote_media_changes = true
 ```
 

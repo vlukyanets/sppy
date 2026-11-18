@@ -68,8 +68,10 @@ Run each instance with its own home so they do not share config and cache:
 2. On two other machines, connect with `sppy://<tailscale-name>:8740/<invite>`.
 3. Repeat steps 2–5 above in stream mode, then in preload mode.
 4. Connect with the host token instead of the invite (`sppy://<name>:8740/<host token>`):
-   you are the host. Settings → *Server folders* lists the `[[media]]` folders. Share another
-   folder by its path on the server → it appears in everyone's Library and in
-   `server.toml` (comments kept). Remove it (✕, confirm) → gone from both. A relative or
-   missing path shows the reason in red. With `allow_remote_media_changes = false` the
-   list is read-only.
+   you are the host. Settings → *Server folders* lists the `[[media]]` folders. Without
+   `media_root` in `server.toml` it says to set one and offers no way to add. Set
+   `media_root = "/srv/media"` and restart: the hint shows it. Share a folder inside it →
+   it appears in everyone's Library and in `server.toml` (comments kept). Remove it
+   (✕, confirm) → gone from both. A relative, missing or outside path (`/etc`,
+   `/srv/media/..`) shows the reason. With `allow_remote_media_changes = false` the list
+   is read-only.

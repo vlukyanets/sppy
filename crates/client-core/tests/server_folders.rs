@@ -22,7 +22,9 @@ async fn host_manages_the_server_folders() {
     let server = start_server(dir.path(), cfg).await;
     let h = host(&server, FakeConfig::default()).await;
     eventually("folders shown", 5, || names(&h) == Some(vec!["Movies".into()])).await;
-    assert!(snap(&h.handle).server_folders.unwrap().editable);
+    let shown = snap(&h.handle).server_folders.unwrap();
+    assert!(shown.editable);
+    assert_eq!(shown.adding, sppy_proto::FolderAdding::Anywhere);
 
     let path = series.path().to_string_lossy().into_owned();
     h.send(UiCommand::AddServerFolder { path, name: Some("TV".into()) });

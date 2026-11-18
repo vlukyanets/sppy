@@ -92,7 +92,10 @@ async fn main() -> anyhow::Result<()> {
         Command::RotateInvite => print_tokens(&config, &tokens::rotate_invite(&data_dir)?),
         Command::Run => {
             // Folders the host adds or removes from the app are saved into this file.
-            let options = sppy_server::StartOptions { config_file: Some(config_path) };
+            let options = sppy_server::StartOptions {
+                config_file: Some(config_path),
+                require_media_root: true,
+            };
             let handle = sppy_server::start_with(config, data_dir, options).await?;
             tokio::signal::ctrl_c().await.context("cannot wait for Ctrl-C")?;
             tracing::info!("shutting down");

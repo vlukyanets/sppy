@@ -167,6 +167,8 @@ pub fn folder_problem_text(problem: sppy_proto::MediaFolderProblem) -> &'static 
         NameTaken => "Another shared folder has that name",
         UnknownFolder => "No shared folder with that name",
         CannotSave => "The server could not save its config file; see the server log",
+        OutsideMediaRoot => "Only folders inside the server's media_root can be shared",
+        NoMediaRoot => "To share folders from the app, set media_root in the server's server.toml",
     }
 }
 

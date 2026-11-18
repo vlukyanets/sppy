@@ -87,6 +87,8 @@ pub struct ServerFolders {
     pub folders: Vec<sppy_proto::MediaFolder>,
     /// The server lets the host change them.
     pub editable: bool,
+    /// Which folders the host may add.
+    pub adding: sppy_proto::FolderAdding,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

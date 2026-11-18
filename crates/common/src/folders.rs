@@ -48,6 +48,29 @@ pub fn new_folder(
     Ok(MediaRoot { name, path: path.to_path_buf() })
 }
 
+/// A folder the host adds from the app must lie inside `root`, after resolving `..` and
+/// symbolic links so that neither leads out of it.
+pub fn check_within(path: &Path, root: &Path) -> Result<(), MediaFolderProblem> {
+    if !path.is_absolute() {
+        return Err(MediaFolderProblem::NotAbsolute);
+    }
+    let real_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    match std::fs::canonicalize(path) {
+        Ok(real) if real.starts_with(&real_root) => Ok(()),
+        Ok(_) => Err(MediaFolderProblem::OutsideMediaRoot),
+        // Say "not found" only where the host may look: elsewhere that would tell them
+        // which paths exist on the server.
+        Err(_) => {
+            let plain = !path.components().any(|c| c == std::path::Component::ParentDir);
+            if plain && (path.starts_with(root) || path.starts_with(&real_root)) {
+                Err(MediaFolderProblem::NotFound)
+            } else {
+                Err(MediaFolderProblem::OutsideMediaRoot)
+            }
+        }
+    }
+}
+
 /// Replace the `[[media]]` tables of a `server.toml` text; everything else (other settings,
 /// comments, order) stays as it was.
 pub fn set_media_in_toml(text: &str, roots: &[MediaRoot]) -> Result<String, toml_edit::TomlError> {
@@ -135,6 +158,55 @@ mod tests {
             new_folder(&existing, &other, Some("Movies")),
             Err(MediaFolderProblem::NameTaken)
         );
+    }
+
+    #[test]
+    fn only_folders_inside_the_media_root_may_be_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("media");
+        let movies = root.join("Movies");
+        let outside = dir.path().join("private");
+        std::fs::create_dir_all(&movies).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        assert_eq!(check_within(&movies, &root), Ok(()));
+        assert_eq!(check_within(&root, &root), Ok(()));
+        assert_eq!(check_within(&outside, &root), Err(MediaFolderProblem::OutsideMediaRoot));
+        assert_eq!(check_within(Path::new("/"), &root), Err(MediaFolderProblem::OutsideMediaRoot));
+        let dots = root.join("../private");
+        assert_eq!(check_within(&dots, &root), Err(MediaFolderProblem::OutsideMediaRoot));
+        assert_eq!(check_within(Path::new("media"), &root), Err(MediaFolderProblem::NotAbsolute));
+        // A missing folder is reported as missing only inside the root: outside it the
+        // answer must not tell whether a path exists.
+        assert_eq!(check_within(&root.join("nope"), &root), Err(MediaFolderProblem::NotFound));
+        assert_eq!(
+            check_within(&dir.path().join("nope"), &root),
+            Err(MediaFolderProblem::OutsideMediaRoot)
+        );
+        assert_eq!(
+            check_within(&root.join("../nope"), &root),
+            Err(MediaFolderProblem::OutsideMediaRoot)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_the_media_root_cannot_lead_out_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("media");
+        let outside = dir.path().join("private");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert_eq!(
+            check_within(&root.join("link"), &root),
+            Err(MediaFolderProblem::OutsideMediaRoot)
+        );
+        // The root itself may be a link.
+        let root_link = dir.path().join("media-link");
+        std::os::unix::fs::symlink(&root, &root_link).unwrap();
+        std::fs::create_dir(root.join("Movies")).unwrap();
+        assert_eq!(check_within(&root.join("Movies"), &root_link), Ok(()));
     }
 
     #[test]

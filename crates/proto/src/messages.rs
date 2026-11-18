@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ItemId, ParticipantId, ReqId, RoomId};
-use crate::library::{LibraryNode, MediaFolder};
+use crate::library::{FolderAdding, LibraryNode, MediaFolder};
 use crate::notice::NoticeAction;
 use crate::state::{
     ChatMessage, ControlMode, Delivery, MediaStatus, PlaybackState, ProgressEntry, RoomState,
@@ -201,6 +201,10 @@ pub enum MediaFolderProblem {
     UnknownFolder,
     /// The server could not save its config file.
     CannotSave,
+    /// The folder is outside the server's `media_root`.
+    OutsideMediaRoot,
+    /// The server has no `media_root`, so folders cannot be added from the app.
+    NoMediaRoot,
 }
 
 impl From<MediaFolderProblem> for ErrorCode {
@@ -272,6 +276,7 @@ pub enum ServerMsg {
     MediaFolders {
         folders: Vec<MediaFolder>,
         editable: bool,
+        adding: FolderAdding,
     },
     Closing {
         reason: CloseReason,

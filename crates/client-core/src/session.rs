@@ -504,8 +504,8 @@ impl<L: PlayerLauncher> Session<L> {
             }
             ServerMsg::Library { roots } => self.snap.library = Some(roots),
             ServerMsg::InviteToken { token } => self.snap.invite_token = Some(token),
-            ServerMsg::MediaFolders { folders, editable } => {
-                self.snap.server_folders = Some(ServerFolders { folders, editable });
+            ServerMsg::MediaFolders { folders, editable, adding } => {
+                self.snap.server_folders = Some(ServerFolders { folders, editable, adding });
             }
             ServerMsg::Closing { reason } => match reason {
                 CloseReason::Kicked => {
