@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use sppy_proto::Fingerprint;
 
 const FILE_NAME: &str = "library-cache.json";
+/// Raise when `sppy_common::duration` learns to read more files: the ones it found no
+/// duration in before are read again.
+const DURATION_PARSER: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Entry {
@@ -16,12 +19,15 @@ struct Entry {
     mtime_secs: u64,
     mtime_nanos: u32,
     fingerprint: Fingerprint,
-    /// From the container header; `None` when it does not say (or for AVI, TS, …).
+    /// From the container header; `None` when it does not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     duration_ms: Option<u64>,
     /// The header was read; entries from before durations were cached lack it.
     #[serde(default)]
     probed: bool,
+    /// [`DURATION_PARSER`] that read it (0: before versions were kept).
+    #[serde(default)]
+    parser: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,9 +76,12 @@ impl FingerprintCache {
         self.entry(path, size, mtime).map(|e| &e.fingerprint)
     }
 
-    /// The cached duration: `Some(None)` when the header was read and had none.
+    /// The cached duration: `Some(None)` when the current parser read the file and found
+    /// none.
     pub fn duration(&self, path: &Path, size: u64, mtime: SystemTime) -> Option<Option<u64>> {
-        self.entry(path, size, mtime).filter(|e| e.probed).map(|e| e.duration_ms)
+        self.entry(path, size, mtime)
+            .filter(|e| e.probed && (e.duration_ms.is_some() || e.parser >= DURATION_PARSER))
+            .map(|e| e.duration_ms)
     }
 
     pub fn insert(&mut self, path: &Path, size: u64, mtime: SystemTime, fingerprint: Fingerprint) {
@@ -88,6 +97,7 @@ impl FingerprintCache {
                 fingerprint,
                 duration_ms: None,
                 probed: false,
+                parser: 0,
             },
         );
     }
@@ -97,6 +107,7 @@ impl FingerprintCache {
         if let Some(e) = self.entries.get_mut(path.to_string_lossy().as_ref()) {
             e.duration_ms = duration_ms;
             e.probed = true;
+            e.parser = DURATION_PARSER;
         }
     }
 
@@ -214,5 +225,38 @@ mod tests {
         assert_eq!(lib.fill_metadata(&mut cache), 1, "only the duration is read");
         assert_eq!(lib.files().next().unwrap().duration_ms, Some(1_500));
         assert_eq!(lib.files().next().unwrap().fingerprint.as_ref(), Some(&fp));
+    }
+
+    /// Files an older parser could not read (MPEG-TS before it learned that) are read once
+    /// more; files whose duration is known, or that the current parser read, are not.
+    #[test]
+    fn files_without_a_duration_are_read_again_by_a_newer_parser() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mkv");
+        std::fs::write(&path, tiny_mkv()).unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        let (secs, nanos) = split(meta.modified().unwrap());
+        let fp = sppy_common::media::fingerprint(&path).unwrap();
+        let entry = |extra: &str| {
+            format!(
+                r#"[{{"path":{:?},"size":{},"mtime_secs":{secs},"mtime_nanos":{nanos},"fingerprint":{},"probed":true{extra}}}]"#,
+                path.to_string_lossy(),
+                meta.len(),
+                serde_json::to_string(&fp).unwrap()
+            )
+        };
+        let roots = [sppy_common::config::MediaRoot { name: "M".into(), path: dir.path().into() }];
+        let data = tempfile::tempdir().unwrap();
+        let fill = |json: String| {
+            std::fs::write(data.path().join("library-cache.json"), json).unwrap();
+            let mut cache = FingerprintCache::load(data.path());
+            let mut lib = crate::library::Library::scan(&roots);
+            let read = lib.fill_metadata(&mut cache);
+            (read, lib.files().next().unwrap().duration_ms)
+        };
+        assert_eq!(fill(entry("")), (1, Some(1_500)), "an older parser found nothing");
+        let current = format!(r#","parser":{DURATION_PARSER}"#);
+        assert_eq!(fill(entry(&current)), (0, None), "the current one found nothing");
+        assert_eq!(fill(entry(r#","duration_ms":7"#)), (0, Some(7)), "known");
     }
 }
