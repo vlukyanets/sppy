@@ -6,14 +6,15 @@ use sppy_proto::{ControlMode, Delivery, MediaStatus};
 use super::{GREEN, RED, YELLOW, theme};
 use crate::app::SppyApp;
 
-pub fn status_text(s: &MediaStatus) -> (String, egui::Color32) {
+/// A word for the status pill, its colour, and the details behind it (shown on hover).
+pub fn status_text(s: &MediaStatus) -> (&'static str, egui::Color32, Option<&str>) {
     let gray = egui::Color32::GRAY;
     match s {
-        MediaStatus::Loading => ("loading".into(), gray),
-        MediaStatus::Ready { .. } => ("ready".into(), GREEN),
-        MediaStatus::Stalled => ("buffering".into(), YELLOW),
-        MediaStatus::Failed { message } => (format!("failed: {message}"), RED),
-        MediaStatus::PlayerClosed => ("player closed".into(), RED),
+        MediaStatus::Loading => ("loading", gray, None),
+        MediaStatus::Ready { .. } => ("ready", GREEN, None),
+        MediaStatus::Stalled => ("buffering", YELLOW, None),
+        MediaStatus::Failed { message } => ("failed", RED, Some(message.as_str())),
+        MediaStatus::PlayerClosed => ("player closed", RED, None),
     }
 }
 
@@ -84,8 +85,11 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                 // Second line: what their player is doing.
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(18.0);
-                    let (status, color) = status_text(&p.status);
-                    theme::pill(ui, status, color);
+                    let (status, color, details) = status_text(&p.status);
+                    let pill = theme::pill(ui, status, color);
+                    if let Some(details) = details {
+                        pill.on_hover_text(details);
+                    }
                     let entry = snap.progress.get(&p.id);
                     match entry.map(|e| &e.delivery) {
                         Some(Delivery::Download { bytes, total })
@@ -138,6 +142,15 @@ pub fn kick_dialog(app: &mut SppyApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A long failure message would push the rest of the line around: it goes into the
+    /// hover text, the pill says only "failed".
+    #[test]
+    fn failure_details_stay_out_of_the_pill() {
+        let failed = MediaStatus::Failed { message: "mpv could not open the media".into() };
+        assert_eq!(status_text(&failed), ("failed", RED, Some("mpv could not open the media")));
+        assert_eq!(status_text(&MediaStatus::Loading).2, None);
+    }
 
     #[test]
     fn sync_indicator_colors_and_format() {
