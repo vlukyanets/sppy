@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master]
 
+# A newer push to the same branch makes an unfinished run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -45,4 +50,5 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace --all-features
+        # All failures at once: a platform-only failure must not hide the next one.
+        run: cargo test --workspace --all-features --no-fail-fast
