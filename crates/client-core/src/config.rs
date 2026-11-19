@@ -48,6 +48,8 @@ pub struct ClientConfig {
     /// Old separate list of "my media folders"; moved into `host.media` on load.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub local_media: Vec<PathBuf>,
+    /// Preferred audio languages, most wanted first (e.g. `["ja"]`).
+    pub audio_languages: Vec<String>,
     /// Preferred subtitle languages, most wanted first (e.g. `["ru", "en"]`).
     pub subtitle_languages: Vec<String>,
     /// Sites whose links others add play without asking, besides the well-known video
@@ -83,6 +85,7 @@ impl Default for ClientConfig {
             mode: DeliveryMode::Stream,
             prefetch_next: true,
             local_media: Vec::new(),
+            audio_languages: Vec::new(),
             subtitle_languages: Vec::new(),
             trusted_sites: Vec::new(),
             cache_dir: None,
@@ -107,6 +110,14 @@ pub enum ConfigError {
 }
 
 impl ClientConfig {
+    /// The preferred languages for the player.
+    pub fn track_languages(&self) -> sppy_player::TrackLanguages {
+        sppy_player::TrackLanguages {
+            audio: self.audio_languages.clone(),
+            subtitles: self.subtitle_languages.clone(),
+        }
+    }
+
     /// Where downloaded media is kept.
     /// One list of media folders: the old `local_media` joins `host.media`.
     pub fn migrated(mut self) -> Self {

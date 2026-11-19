@@ -133,9 +133,10 @@ fn utf8_alias(path: &std::path::Path, _links: &mut Vec<PathBuf>) -> PlayerResult
     Err(PlayerError::Ipc(format!("path is not valid Unicode: {}", path.display())))
 }
 
-/// mpv's `slang`: the languages as given plus their other ISO 639 form, since files name
-/// languages either way (`en` / `eng`) and older mpv versions match them literally.
-fn slang(languages: &[String]) -> String {
+/// mpv's `alang` / `slang`: the languages as given plus their other ISO 639 form, since
+/// files name languages either way (`en` / `eng`) and older mpv versions match them
+/// literally.
+fn mpv_languages(languages: &[String]) -> String {
     const PAIRS: &[(&str, &[&str])] = &[
         ("en", &["eng"]),
         ("ru", &["rus"]),
@@ -377,8 +378,11 @@ impl Player for MpvPlayer {
         self.cmd(vec![json!("loadfile"), json!(src), json!("replace")]).await
     }
 
-    async fn set_subtitle_languages(&mut self, languages: &[String]) -> PlayerResult {
-        self.cmd(vec![json!("set_property"), json!("slang"), json!(slang(languages))]).await
+    async fn set_track_languages(&mut self, languages: &crate::TrackLanguages) -> PlayerResult {
+        let alang = mpv_languages(&languages.audio);
+        self.cmd(vec![json!("set_property"), json!("alang"), json!(alang)]).await?;
+        let slang = mpv_languages(&languages.subtitles);
+        self.cmd(vec![json!("set_property"), json!("slang"), json!(slang)]).await
     }
 
     async fn play(&mut self) -> PlayerResult {
@@ -408,8 +412,8 @@ impl Player for MpvPlayer {
 }
 
 #[cfg(test)]
-mod slang_tests {
-    use super::slang;
+mod language_tests {
+    use super::mpv_languages as slang;
 
     #[test]
     fn languages_get_both_iso_forms_in_order() {

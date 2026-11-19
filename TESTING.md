@@ -67,7 +67,10 @@ Run each instance with its own home so they do not share config and cache:
 15. A: **Stop hosting** with B in the room → a confirmation; confirm → B shows "Server
     unavailable", A sees the join card with **Become host** again, and port 8740 is free
     (`ss -ltn | grep 8740` prints nothing). Become host again works.
-16. Look: rows light up under the pointer, the current item has an accent bar, row actions
+16. Languages: a file with two audio tracks (e.g. `rus` and `jpn`) and an `eng` subtitle track
+    inside. Settings → *Audio languages* `ja`, *Subtitle languages* `en`, Save, select the
+    file → Japanese audio with English subtitles, without pressing `#` or `j`.
+17. Look: rows light up under the pointer, the current item has an accent bar, row actions
     (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
     instead of icons anywhere; Settings opens centred with cards.
 

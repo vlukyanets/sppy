@@ -154,7 +154,8 @@ Names are compared ignoring case and punctuation: `Movie (2019) [EN].srt` belong
 `Movie.2019.mkv` with the label `en`. The player shows the subtitle matching the first of
 your *Subtitle languages* (Settings), otherwise an unlabeled one; the others are available
 as tracks (`j` in mpv). Without such a file, the same languages pick a subtitle track inside
-the video (MKV, MP4); `en` and `eng` both work. Changes apply from the next item.
+the video (MKV, MP4); `en` and `eng` both work. *Audio languages* likewise pick the audio
+track (e.g. `ja` for the original of a dubbed series). Changes apply from the next item.
 
 ## License
 

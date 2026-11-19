@@ -66,6 +66,13 @@ pub enum PlayerError {
 
 pub type PlayerResult<T = ()> = Result<T, PlayerError>;
 
+/// Preferred track languages, most wanted first (e.g. `["ru", "en"]`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrackLanguages {
+    pub audio: Vec<String>,
+    pub subtitles: Vec<String>,
+}
+
 /// A running player instance controlled by sppy.
 pub trait Player: Send + 'static {
     fn capabilities(&self) -> Capabilities;
@@ -74,11 +81,11 @@ pub trait Player: Send + 'static {
         media: MediaSource,
         subtitles: Vec<MediaSource>,
     ) -> impl Future<Output = PlayerResult> + Send;
-    /// Preferred subtitle languages (e.g. `["ru", "en"]`), for the next `load` to pick a
-    /// subtitle track inside the file; empty for the player's own choice.
-    fn set_subtitle_languages(
+    /// Preferred languages for the next `load` to pick the audio and subtitle tracks
+    /// inside the file; empty lists leave the choice to the player.
+    fn set_track_languages(
         &mut self,
-        languages: &[String],
+        languages: &TrackLanguages,
     ) -> impl Future<Output = PlayerResult> + Send;
     fn play(&mut self) -> impl Future<Output = PlayerResult> + Send;
     fn pause(&mut self) -> impl Future<Output = PlayerResult> + Send;

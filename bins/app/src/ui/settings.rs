@@ -16,6 +16,11 @@ fn path_label(ui: &mut egui::Ui, path: &str) {
     ui.add(egui::Label::new(path).truncate()).on_hover_text(path);
 }
 
+/// `ru, en` or `ru en` → `["ru", "en"]`.
+fn language_list(text: &str) -> Vec<String> {
+    text.split([',', ' ']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
+}
+
 /// Two columns: labels on the left, all of the same width.
 fn form(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id).num_columns(2).min_col_width(150.0).spacing([12.0, 8.0]).show(ui, add);
@@ -63,18 +68,18 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                             app.ui.extra_args.split_whitespace().map(str::to_owned).collect();
                     }
                     ui.end_row();
+                    ui.label("Audio languages");
+                    if wide_edit(ui, &mut app.ui.audio_languages, "e.g. ja, en (first one wins)")
+                        .changed()
+                    {
+                        c.audio_languages = language_list(&app.ui.audio_languages);
+                    }
+                    ui.end_row();
                     ui.label("Subtitle languages");
                     if wide_edit(ui, &mut app.ui.subtitle_languages, "e.g. ru, en (first one wins)")
                         .changed()
                     {
-                        c.subtitle_languages = app
-                            .ui
-                            .subtitle_languages
-                            .split([',', ' '])
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(str::to_owned)
-                            .collect();
+                        c.subtitle_languages = language_list(&app.ui.subtitle_languages);
                     }
                     ui.end_row();
                 });
@@ -290,7 +295,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     }
     if save {
         app.send(UiCommand::SetTrustedSites(app.config.trusted_sites.clone()));
-        app.send(UiCommand::SetSubtitleLanguages(app.config.subtitle_languages.clone()));
+        app.send(UiCommand::SetTrackLanguages(app.config.track_languages()));
     }
     if save || rescan {
         app.apply_media_folders(rescan);
@@ -390,4 +395,15 @@ fn server_folder_list(
             state.server_folder_name.clear();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_list;
+
+    #[test]
+    fn languages_split_on_commas_and_spaces() {
+        assert_eq!(language_list(" ru, en  ja,,"), ["ru", "en", "ja"]);
+        assert!(language_list("  ").is_empty());
+    }
 }

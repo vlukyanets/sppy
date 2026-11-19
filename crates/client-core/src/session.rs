@@ -376,8 +376,9 @@ impl<L: PlayerLauncher> Session<L> {
                     message: format!("Skipped the link to {}", q.site),
                 });
             }
-            UiCommand::SetSubtitleLanguages(languages) => {
-                self.config.subtitle_languages = languages;
+            UiCommand::SetTrackLanguages(languages) => {
+                self.config.audio_languages = languages.audio;
+                self.config.subtitle_languages = languages.subtitles;
             }
             UiCommand::SetTrustedSites(sites) => {
                 self.config.trusted_sites = sites;
@@ -946,9 +947,9 @@ impl<L: PlayerLauncher> Session<L> {
         };
         self.echo.issued(self.local_ms(), PendingOp::Load);
         if let Some(p) = &mut self.player
-            && let Err(e) = p.set_subtitle_languages(&self.config.subtitle_languages).await
+            && let Err(e) = p.set_track_languages(&self.config.track_languages()).await
         {
-            tracing::warn!("cannot set subtitle languages: {e}");
+            tracing::warn!("cannot set track languages: {e}");
         }
         if let Some(p) = &mut self.player
             && let Err(e) = p.load(media, subs).await
