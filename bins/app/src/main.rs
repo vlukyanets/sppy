@@ -5,6 +5,8 @@
 
 mod app;
 mod host;
+mod instance;
+mod links;
 mod log;
 mod logging;
 mod search;
@@ -17,6 +19,13 @@ use sppy_player::mpv::{MpvConfig, MpvLauncher};
 
 fn main() -> anyhow::Result<()> {
     let paths = client_paths();
+    // `sppy sppy://…` (a clicked invite link): hand it to the app if it is already open.
+    let link = links::link_from_args(std::env::args().skip(1));
+    if let Some(link) = &link
+        && instance::forward(&paths.data_dir, link)
+    {
+        return Ok(());
+    }
     let _log_guard = logging::init(&paths.logs_dir);
     let config = match ClientConfig::load_or_default(&paths.config_file) {
         Ok(c) => c,
@@ -49,7 +58,7 @@ fn main() -> anyhow::Result<()> {
         "sppy",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::SppyApp::new(cc, rt, handle, launcher, config, paths)))
+            Ok(Box::new(app::SppyApp::new(cc, rt, handle, launcher, config, paths, link)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

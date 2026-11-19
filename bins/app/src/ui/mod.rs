@@ -59,6 +59,19 @@ pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
             });
         });
     }
+    if let Some(link) = app.ui.invite_received.clone() {
+        let host = sppy_common::link::parse_address(&link).map(|a| a.host).unwrap_or_default();
+        theme::callout(ui, theme::ACCENT, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "An invite link to {host} is waiting in the join form: leave this room to use it."
+                ));
+                if ui.button("Dismiss").clicked() {
+                    app.ui.invite_received = None;
+                }
+            });
+        });
+    }
     if let Some(q) = &snap.link_question {
         theme::callout(ui, YELLOW, |ui| {
             ui.label(format!(

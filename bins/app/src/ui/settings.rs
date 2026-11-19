@@ -40,6 +40,14 @@ fn pick_folder() -> Option<PathBuf> {
 }
 
 pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
+    if !app.ui.settings_open {
+        // Looked up again the next time Settings open (it may change outside the app).
+        app.ui.link_handler = None;
+        return;
+    }
+    if app.ui.link_handler.is_none() {
+        app.ui.link_handler = Some(crate::links::is_registered());
+    }
     let mut open = app.ui.settings_open;
     let mut save = false;
     let mut restart = false;
@@ -184,6 +192,33 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 && let Some(server) = &snap.server_folders
             {
                 server_folders(&mut app.ui, &app.handle, ui, server);
+            }
+
+            if let Some(Some(registered)) = app.ui.link_handler {
+                theme::card(ui, "Invite links", None, |ui| {
+                    let (text, button) = if registered {
+                        ("Clicking an sppy:// link opens this app with the link filled in.", "Stop")
+                    } else {
+                        (
+                            "Clicking an sppy:// link in a browser or messenger can open this app \
+                             with the link filled in.",
+                            "Open sppy:// links with this app",
+                        )
+                    };
+                    theme::muted(ui, text);
+                    if ui.button(button).clicked() {
+                        let result = if registered {
+                            crate::links::unregister()
+                        } else {
+                            crate::links::register()
+                        };
+                        app.ui.link_handler_error = result.err();
+                        app.ui.link_handler = None;
+                    }
+                    if let Some(e) = &app.ui.link_handler_error {
+                        ui.colored_label(super::RED, e);
+                    }
+                });
             }
 
             theme::card(ui, "Downloads", None, |ui| {

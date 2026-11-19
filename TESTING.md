@@ -70,7 +70,13 @@ Run each instance with its own home so they do not share config and cache:
 16. Languages: a file with two audio tracks (e.g. `rus` and `jpn`) and an `eng` subtitle track
     inside. Settings → *Audio languages* `ja`, *Subtitle languages* `en`, Save, select the
     file → Japanese audio with English subtitles, without pressing `#` or `j`.
-17. Look: rows light up under the pointer, the current item has an accent bar, row actions
+17. Invite links: Settings → *Invite links* → **Open sppy:// links with this app** → the
+    card says links open this app. Click an `sppy://` link in a browser: sppy starts with
+    the link in the join form (not joined). Click another while sppy is open: no second
+    window; the link replaces the one in the form, and while in a room a note says so.
+    **Stop** → clicking links no longer opens sppy. (Linux: `xdg-mime query default
+    x-scheme-handler/sppy` prints `sppy-link.desktop` while registered.)
+18. Look: rows light up under the pointer, the current item has an accent bar, row actions
     (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
     instead of icons anywhere; Settings opens centred with cards.
 

@@ -36,6 +36,9 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
    The list next to it picks the address in the link: one of this computer's
    addresses (LAN, VPN such as Tailscale) or the *Public address* from Settings.
 3. Friends paste the link into **Invite link**, enter a nickname and click **Connect**.
+   With ⚙ Settings → *Invite links* → **Open sppy:// links with this app** (Linux, Windows),
+   clicking such a link in a browser or messenger opens sppy with the link filled in;
+   if sppy is already open, the link goes to that window. It never joins by itself.
 4. Add files from **Library** (or a URL) and press **Play**. Pause and seek either in the
    window or directly in mpv — everyone follows.
 5. **Stop hosting** (top right) leaves the room and stops the server; if others are still

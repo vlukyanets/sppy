@@ -59,6 +59,11 @@ pub struct UiState {
     pub custom_host: Option<String>,
     /// Folders the core searches for local copies, as last sent to it.
     pub media_folders: Vec<std::path::PathBuf>,
+    /// An invite link that arrived while in a room (it is also in `address`).
+    pub invite_received: Option<String>,
+    /// Whether this app opens `sppy://` links: looked up when Settings open.
+    pub link_handler: Option<Option<bool>>,
+    pub link_handler_error: Option<String>,
 }
 
 pub struct SppyApp {
@@ -74,6 +79,8 @@ pub struct SppyApp {
     /// The embedded server while hosting.
     pub host: Option<ServerHandle>,
     host_starting: Option<std::sync::mpsc::Receiver<Result<ServerHandle, String>>>,
+    /// Invite links handed over by later starts of the app.
+    links: std::sync::mpsc::Receiver<String>,
 }
 
 impl SppyApp {
@@ -84,8 +91,15 @@ impl SppyApp {
         launcher: MpvLauncher,
         config: ClientConfig,
         paths: ClientPaths,
+        link: Option<String>,
     ) -> Self {
         ui::theme::apply(&cc.egui_ctx);
+        let (link_tx, links) = std::sync::mpsc::channel();
+        let link_ctx = cc.egui_ctx.clone();
+        crate::instance::listen(&rt, &paths.data_dir, move |link| {
+            let _ = link_tx.send(link);
+            link_ctx.request_repaint();
+        });
         // Repaint whenever the core publishes a new snapshot or event.
         let ctx = cc.egui_ctx.clone();
         let mut state = handle.state.clone();
@@ -100,7 +114,9 @@ impl SppyApp {
             }
         });
         let ui = UiState {
-            address: config.servers.last().map(|s| s.address.clone()).unwrap_or_default(),
+            address: link.unwrap_or_else(|| {
+                config.servers.last().map(|s| s.address.clone()).unwrap_or_default()
+            }),
             nickname: config.nickname.clone(),
             log: EventLog::new(LOG_LINES),
             tab: Tab::Playlist,
@@ -126,9 +142,23 @@ impl SppyApp {
             server_folder_path: String::new(),
             server_folder_name: String::new(),
             media_folders: config.media_folders(),
+            invite_received: None,
+            link_handler: None,
+            link_handler_error: None,
         };
         let events = handle.subscribe_events();
-        SppyApp { rt, handle, launcher, config, paths, ui, events, host: None, host_starting: None }
+        SppyApp {
+            rt,
+            handle,
+            launcher,
+            config,
+            paths,
+            ui,
+            events,
+            host: None,
+            host_starting: None,
+            links,
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -193,6 +223,23 @@ impl SppyApp {
             let _ = tx.send(crate::host::become_host(cfg, dir).await.map_err(|e| e.to_string()));
         });
         self.host_starting = Some(rx);
+    }
+
+    /// A clicked invite link reached this window: put it into the join form, never join
+    /// on its own.
+    fn take_links(&mut self, ctx: &egui::Context) {
+        while let Ok(link) = self.links.try_recv() {
+            let online = matches!(
+                self.snapshot().connection,
+                sppy_client_core::api::ConnState::Connected
+                    | sppy_client_core::api::ConnState::Reconnecting { .. }
+            );
+            let host = sppy_common::link::parse_address(&link).map(|a| a.host).unwrap_or_default();
+            tracing::info!("invite link to {host} received from another start of the app");
+            self.ui.address = link.clone();
+            self.ui.invite_received = online.then_some(link);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
     }
 
     /// Join the room of the server running here again (after Disconnect).
@@ -300,6 +347,7 @@ impl SppyApp {
 impl eframe::App for SppyApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+        self.take_links(ctx);
         self.poll_host();
         self.refresh_local_ips();
         if self.host_starting.is_some() {
