@@ -36,7 +36,9 @@ struct Room {
 async fn room_with_a_guest_link(link: &str) -> Room {
     let dir = tempfile::tempdir().unwrap();
     let server = start_server(dir.path(), test_config()).await;
-    let h = host(&server, FakeConfig::default()).await;
+    // A slow player: what the test sees of the player and of the snapshot comes at
+    // different times, so every check must wait for its condition.
+    let h = host(&server, FakeConfig { cmd_latency_ms: 300, ..FakeConfig::default() }).await;
     let g = guest(&server, "g", FakeConfig::default()).await;
     g.send(UiCommand::PlaylistAdd(vec![Source::Url { url: link.into() }]));
     eventually("item current", 5, || snap(&h.handle).playback.is_some_and(|p| p.item_id.is_some()))
@@ -59,8 +61,10 @@ async fn a_link_to_an_unknown_site_waits_for_my_answer() {
     assert_eq!(my_status(&h), Some(MediaStatus::Loading), "the room waits for the answer");
 
     h.send(UiCommand::AllowLink(item));
-    eventually("opened once allowed", 5, || loaded(&h, LINK)).await;
-    assert_eq!(snap(&h.handle).link_question, None);
+    eventually("opened once allowed, question gone", 5, || {
+        loaded(&h, LINK) && snap(&h.handle).link_question.is_none()
+    })
+    .await;
     server.shutdown().await;
 }
 
@@ -69,8 +73,11 @@ async fn skipping_a_link_lets_the_room_go_on_without_me() {
     let Room { _dir, server, h, g: _g, item } = room_with_a_guest_link(LINK).await;
     eventually("host asked", 5, || snap(&h.handle).link_question.is_some()).await;
     h.send(UiCommand::SkipLink(item));
-    eventually("skipped", 5, || matches!(my_status(&h), Some(MediaStatus::Failed { .. }))).await;
-    assert_eq!(snap(&h.handle).link_question, None);
+    eventually("skipped, question gone", 5, || {
+        matches!(my_status(&h), Some(MediaStatus::Failed { .. }))
+            && snap(&h.handle).link_question.is_none()
+    })
+    .await;
     assert!(!loaded(&h, LINK));
     eventually("the room no longer waits for me", 5, || {
         snap(&h.handle).playback.is_some_and(|p| p.hold.is_none())
@@ -84,8 +91,10 @@ async fn trusting_the_site_opens_its_links() {
     let Room { _dir, server, h, g: _g, .. } = room_with_a_guest_link(LINK).await;
     eventually("host asked", 5, || snap(&h.handle).link_question.is_some()).await;
     h.send(UiCommand::SetTrustedSites(vec!["example.net".into()]));
-    eventually("opened", 5, || loaded(&h, LINK)).await;
-    assert_eq!(snap(&h.handle).link_question, None);
+    eventually("opened, question gone", 5, || {
+        loaded(&h, LINK) && snap(&h.handle).link_question.is_none()
+    })
+    .await;
     server.shutdown().await;
 }
 
