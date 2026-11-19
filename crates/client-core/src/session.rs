@@ -299,9 +299,7 @@ impl<L: PlayerLauncher> Session<L> {
                 self.request(|req_id| ClientMsg::SetSpeed { req_id, speed });
             }
             UiCommand::PlaylistAdd(sources) => {
-                let after =
-                    self.snap.room.as_ref().and_then(|r| r.playlist.last()).map(|i| i.item_id);
-                self.request(|req_id| ClientMsg::PlaylistAdd { req_id, sources, after });
+                self.request(|req_id| ClientMsg::PlaylistAdd { req_id, sources, after: None });
             }
             UiCommand::PlaylistRemove(item_id) => {
                 self.request(|req_id| ClientMsg::PlaylistRemove { req_id, item_id });

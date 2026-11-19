@@ -53,6 +53,7 @@ pub enum ClientMsg {
     PlaylistAdd {
         req_id: ReqId,
         sources: Vec<Source>,
+        /// Insert after this item; `None` appends to the end.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<ItemId>,
     },

@@ -87,7 +87,13 @@ impl Room {
                 added_by: pid,
             });
         }
-        let Some(mut index) = self.insert_index(after) else {
+        // Without a place, at the end: the client may not know the items it added a moment
+        // ago yet, so naming the last one would put a quick second add in the wrong place.
+        let index = match after {
+            None => Some(self.playlist.len()),
+            Some(a) => self.position_of(a).map(|p| p + 1),
+        };
+        let Some(mut index) = index else {
             return self.denied(pid, req_id, ErrorCode::UnknownItem);
         };
         let mut ids = Vec::with_capacity(new_items.len());
@@ -217,20 +223,23 @@ impl Room {
         self.playback_changed();
         self.playback.cause = None;
         match next {
-            Some(id) => {
+            Some(_) => {
                 self.playback.paused = paused;
                 self.playback.hold =
                     Some(Hold { reason: HoldReason::ItemStart, waiting_for: self.active_ids() });
-                effects.push(Self::notice(None, NoticeAction::ItemChanged { item_id: id }));
             }
             None => {
                 self.playback.paused = true;
                 self.playback.hold = None;
             }
         }
-        effects.push(self.broadcast_room());
-        effects.push(self.broadcast_playback());
-        effects
+        // The state first: notices name items, which clients look up in it.
+        let mut out = vec![self.broadcast_room(), self.broadcast_playback()];
+        out.extend(effects);
+        if let Some(id) = next {
+            out.push(Self::notice(None, NoticeAction::ItemChanged { item_id: id }));
+        }
+        out
     }
 
     fn file_missing(&self, id: ItemId) -> bool {

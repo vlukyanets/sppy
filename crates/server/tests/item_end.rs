@@ -39,9 +39,12 @@ async fn the_room_moves_on_when_the_file_ends_with_nobody_watching() {
     let sources =
         vec![Source::File { file_id: id("1.mkv") }, Source::File { file_id: id("2.mkv") }];
     // Durations arrive with the background fingerprint pass: add once they are known.
+    // Wait for the room in the state each step leads to, never just for the next update.
     let items = loop {
         h.send(ClientMsg::PlaylistAdd { req_id: 1, sources: sources.clone(), after: None }).await;
-        let ServerMsg::Room(room) = h.recv_until(|m| matches!(m, ServerMsg::Room(_))).await else {
+        let ServerMsg::Room(room) =
+            h.recv_until(|m| matches!(m, ServerMsg::Room(r) if r.playlist.len() == 2)).await
+        else {
             unreachable!()
         };
         let durations: Vec<_> = room.playlist.iter().map(|i| i.duration_ms).collect();
@@ -50,8 +53,8 @@ async fn the_room_moves_on_when_the_file_ends_with_nobody_watching() {
         }
         for item in room.playlist {
             h.send(ClientMsg::PlaylistRemove { req_id: 2, item_id: item.item_id }).await;
-            h.recv_until(|m| matches!(m, ServerMsg::Room(_))).await;
         }
+        h.recv_until(|m| matches!(m, ServerMsg::Room(r) if r.playlist.is_empty())).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     h.send(ClientMsg::PlaylistSelect { req_id: 3, item_id: items[0] }).await;

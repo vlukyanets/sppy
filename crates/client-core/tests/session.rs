@@ -337,3 +337,34 @@ async fn missing_player_is_reported_clearly() {
     assert!(text.contains("not found"), "{text}");
     server.shutdown().await;
 }
+
+/// Adding twice in a row, before the room answered the first time, keeps the order.
+#[tokio::test]
+async fn quick_adds_keep_their_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let h = host(&server, FakeConfig::default()).await;
+    for batch in [vec!["a1", "a2"], vec!["b1"], vec!["c1", "c2"]] {
+        h.send(UiCommand::PlaylistAdd(batch.into_iter().map(url).collect()));
+    }
+    let titles = || -> Vec<String> {
+        let url_of = |i: Item| match i.source {
+            Source::Url { url } => url,
+            Source::File { file_id } => file_id.0,
+        };
+        snap(&h.handle)
+            .room
+            .map(|r| r.playlist.into_iter().map(url_of).collect())
+            .unwrap_or_default()
+    };
+    eventually("all added", 5, || titles().len() == 5).await;
+    let expected: Vec<String> = ["a1", "a2", "b1", "c1", "c2"]
+        .iter()
+        .map(|u| format!("https://example.invalid/{u}"))
+        .collect();
+    assert_eq!(titles(), expected);
+    // Then, with the playlist known, still at the end.
+    h.send(UiCommand::PlaylistAdd(vec![url("d1")]));
+    eventually("appended", 5, || titles().last().is_some_and(|t| t.ends_with("/d1"))).await;
+    server.shutdown().await;
+}

@@ -558,6 +558,28 @@ mod playlist {
         assert!(effects.contains(&Effect::Persist));
     }
 
+    /// "Now playing" names the item, so clients must know the item before the notice.
+    #[test]
+    fn the_new_playlist_goes_out_before_now_playing() {
+        let (mut r, h) = setup();
+        let effects = add(&mut r, 0, h, vec![file_src("a")], None);
+        let room_at = effects.iter().position(|e| {
+            matches!(e, Effect::Broadcast { msg: ServerMsg::Room(s) } if !s.playlist.is_empty())
+        });
+        let notice_at = effects.iter().position(|e| {
+            matches!(
+                e,
+                Effect::Broadcast {
+                    msg: ServerMsg::Event(Event::Notice {
+                        action: NoticeAction::ItemChanged { .. },
+                        ..
+                    })
+                }
+            )
+        });
+        assert!(room_at.unwrap() < notice_at.unwrap(), "{effects:#?}");
+    }
+
     #[test]
     fn add_url_uses_url_as_title() {
         let (mut r, h) = setup();
@@ -565,14 +587,16 @@ mod playlist {
         assert_eq!(r.state().playlist[0].title, "https://x/y");
     }
 
+    /// Without a place, items go to the end: a client adding twice in a row cannot know
+    /// the items of its first request yet, so it must not have to name the last item.
     #[test]
-    fn add_after_and_at_start() {
+    fn add_after_an_item_or_at_the_end() {
         let (mut r, h) = setup();
         add(&mut r, 0, h, vec![file_src("a"), file_src("b")], None); // [1, 2]
         add(&mut r, 0, h, vec![file_src("c")], Some(ItemId(1))); // [1, 3, 2]
         assert_eq!(playlist_ids(&r), vec![1, 3, 2]);
-        add(&mut r, 0, h, vec![file_src("c")], None); // at start
-        assert_eq!(playlist_ids(&r), vec![4, 1, 3, 2]);
+        add(&mut r, 0, h, vec![file_src("c")], None); // at the end
+        assert_eq!(playlist_ids(&r), vec![1, 3, 2, 4]);
         let effects = r.command(
             0,
             h,
@@ -1053,7 +1077,7 @@ mod persist {
 
         let h2 = host(&mut restored);
         add(&mut restored, 0, h2, vec![Source::Url { url: "u4".into() }], None);
-        assert_eq!(playlist_ids(&restored)[0], 4);
+        assert_eq!(playlist_ids(&restored).last(), Some(&4), "ids go on after a restore");
     }
 
     #[test]
