@@ -4,6 +4,7 @@ use sppy_client_core::api::{ConnState, Snapshot, UiCommand};
 use sppy_client_core::config::DeliveryMode;
 use sppy_client_core::netaddr;
 
+use super::theme;
 use crate::app::SppyApp;
 
 pub fn state_text(c: &ConnState) -> String {
@@ -34,12 +35,21 @@ fn unencrypted_badge(ui: &mut egui::Ui) {
     ui.colored_label(super::YELLOW, "⚠ Not encrypted").on_hover_text(UNENCRYPTED);
 }
 
+/// How library files reach me. Not shown while I host: my library is my own folders, so
+/// its files always play from my disk (and links always stream).
 fn mode_switch(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
+    if app.host.is_some() {
+        return;
+    }
     let mut mode = snap.local.mode;
-    ui.radio_value(&mut mode, DeliveryMode::Stream, "Stream")
-        .on_hover_text("Play files directly from the server");
-    ui.radio_value(&mut mode, DeliveryMode::Preload, "Preload")
-        .on_hover_text("Download each file before playing it");
+    theme::segmented(
+        ui,
+        &mut mode,
+        &[(DeliveryMode::Stream, "Stream"), (DeliveryMode::Preload, "Preload")],
+    )
+    .on_hover_text(
+        "Stream: play files directly from the server.\nPreload: download each file before playing it.",
+    );
     if mode != snap.local.mode {
         app.config.mode = mode;
         app.save_config();
@@ -107,84 +117,181 @@ fn custom_host_edit(app: &mut SppyApp, ui: &mut egui::Ui) {
 
 pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let online = matches!(snap.connection, ConnState::Connected | ConnState::Reconnecting { .. });
-    ui.add_space(4.0);
     if online {
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             let color =
                 if snap.connection == ConnState::Connected { super::GREEN } else { super::YELLOW };
             ui.colored_label(color, "●");
-            ui.label(format!("{} as {}", state_text(&snap.connection), app.ui.nickname));
+            ui.label(egui::RichText::new(&app.ui.nickname).strong());
+            ui.label(egui::RichText::new(state_text(&snap.connection)).color(theme::MUTED));
             if app.host.is_none() && unencrypted(&app.ui.address) {
                 unencrypted_badge(ui);
             }
-            ui.separator();
+            ui.add_space(10.0);
             mode_switch(app, ui, snap);
-            ui.separator();
-            if let Some(host) = &app.host {
-                ui.label(format!("Hosting on port {}", host.local_addr.port()));
-                invite_host_choice(app, ui);
-                if let Some(link) = snap.invite_token.as_deref().and_then(|t| app.invite_link(t)) {
-                    if ui.button("Copy invite link").on_hover_text(&link).clicked() {
-                        ui.ctx().copy_text(link.clone());
-                    }
-                    if unencrypted(&link) {
-                        unencrypted_badge(ui);
-                    }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    app.ui.settings_open = !app.ui.settings_open;
                 }
-                ui.separator();
-            }
-            if !snap.player_open && ui.button("Open player").clicked() {
-                app.send(UiCommand::OpenPlayer);
-            }
-            if ui.button("Disconnect").clicked() {
-                app.send(UiCommand::Disconnect);
-            }
+                if app.host.is_some() {
+                    let others = snap.room.as_ref().is_some_and(|r| {
+                        r.participants.iter().any(|p| p.connected && Some(p.id) != snap.me)
+                    });
+                    if ui
+                        .button("Stop hosting")
+                        .on_hover_text("Leave the room and stop your server")
+                        .clicked()
+                    {
+                        if others {
+                            app.ui.confirm_stop_hosting = true;
+                        } else {
+                            app.stop_hosting();
+                        }
+                    }
+                } else if ui.button("Disconnect").clicked() {
+                    app.send(UiCommand::Disconnect);
+                }
+                if !snap.player_open && ui.add(theme::primary("Open player")).clicked() {
+                    app.send(UiCommand::OpenPlayer);
+                }
+                if let Some(host) = &app.host {
+                    let port = host.local_addr.port();
+                    ui.add_space(10.0);
+                    if let Some(link) =
+                        snap.invite_token.as_deref().and_then(|t| app.invite_link(t))
+                    {
+                        if unencrypted(&link) {
+                            unencrypted_badge(ui);
+                        }
+                        if ui.add(theme::primary("Copy invite link")).on_hover_text(&link).clicked()
+                        {
+                            ui.ctx().copy_text(link.clone());
+                        }
+                    }
+                    invite_host_choice(app, ui);
+                    ui.label(
+                        egui::RichText::new(format!("Hosting on :{port}")).color(theme::MUTED),
+                    );
+                }
+            });
+        });
+    }
+}
+
+/// When not in a room: the join form, as a card in the middle of the window.
+pub fn join_card(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
+    ui.add_space((ui.available_height() * 0.18).max(20.0));
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new("sppy").size(30.0).strong().color(theme::ACCENT));
+        ui.label(egui::RichText::new("Watch together, in sync").color(theme::MUTED));
+        ui.add_space(14.0);
+    });
+    let width = 480.0_f32.min(ui.available_width() - 40.0);
+    ui.vertical_centered(|ui| {
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::same(20))
+            .show(ui, |ui| {
+                ui.set_width(width);
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    join_form(app, ui, snap)
+                });
+            });
+    });
+}
+
+fn join_form(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
+    ui.set_width(ui.available_width());
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Join a room").heading().strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("⚙").on_hover_text("Settings").clicked() {
                 app.ui.settings_open = !app.ui.settings_open;
             }
         });
-        ui.add_space(4.0);
-        return;
-    }
-    egui::Grid::new("connect-grid").num_columns(2).show(ui, |ui| {
-        ui.label("Invite link");
-        ui.add(
-            egui::TextEdit::singleline(&mut app.ui.address)
-                .hint_text("sppy://host:8740/token")
-                .desired_width(320.0),
-        );
-        ui.end_row();
-        ui.label("Nickname");
-        ui.text_edit_singleline(&mut app.ui.nickname);
-        ui.end_row();
     });
+    ui.add_space(4.0);
+    let field = |ui: &mut egui::Ui, label: &str, text: &mut String, hint: &str| {
+        ui.label(egui::RichText::new(label).small().color(theme::MUTED));
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .hint_text(hint)
+                .margin(egui::Margin::symmetric(8, 6))
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(4.0);
+    };
+    field(ui, "Invite link", &mut app.ui.address, "sppy://host:8740/token");
+    field(ui, "Nickname", &mut app.ui.nickname, "How others see you");
     if unencrypted(&app.ui.address) {
         ui.add(egui::Label::new(egui::RichText::new(UNENCRYPTED).color(super::YELLOW)).wrap());
     }
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        mode_switch(app, ui, snap);
-        ui.separator();
         let has_nick = !app.ui.nickname.trim().is_empty();
         let can_join = has_nick && !app.ui.address.trim().is_empty();
-        if ui.add_enabled(can_join, egui::Button::new("Connect")).clicked() {
+        let hosting = app.host.is_some();
+        let connect =
+            if hosting { egui::Button::new("Connect") } else { theme::primary("Connect") };
+        if ui.add_enabled(can_join, connect).clicked() {
             let address = app.ui.address.trim().to_owned();
             app.remember_server(&address);
             app.send(UiCommand::Connect { address, nickname: app.ui.nickname.trim().to_owned() });
         }
-        if app.host.is_none()
-            && ui
-                .add_enabled(has_nick && !app.host_starting(), egui::Button::new("Become host"))
-                .on_hover_text("Run the server here and invite others")
+        if hosting {
+            if ui
+                .add(theme::primary("Back to my room"))
+                .on_hover_text("Your server is still running")
                 .clicked()
+            {
+                app.rejoin_own_room();
+            }
+            if ui
+                .button("Stop hosting")
+                .on_hover_text("Everyone in your room is disconnected")
+                .clicked()
+            {
+                app.stop_hosting();
+            }
+        } else if ui
+            .add_enabled(has_nick && !app.host_starting(), egui::Button::new("Become host"))
+            .on_hover_text("Run the server here and invite others")
+            .clicked()
         {
             app.become_host();
         }
-        if ui.button("⚙").on_hover_text("Settings").clicked() {
-            app.ui.settings_open = !app.ui.settings_open;
-        }
     });
-    if !matches!(snap.connection, ConnState::Idle) {
-        ui.label(state_text(&snap.connection));
+    if app.host.is_none() {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| mode_switch(app, ui, snap));
     }
-    ui.add_space(4.0);
+    if !matches!(snap.connection, ConnState::Idle) {
+        ui.label(egui::RichText::new(state_text(&snap.connection)).color(theme::MUTED));
+    }
+    ui.add_space(6.0);
+}
+
+/// Confirmation before stopping the server while others are watching.
+pub fn stop_hosting_dialog(app: &mut SppyApp, ctx: &egui::Context) {
+    if !app.ui.confirm_stop_hosting {
+        return;
+    }
+    egui::Window::new("Stop hosting")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label("Others are in your room. Stopping the server disconnects everyone.");
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::primary("Stop hosting")).clicked() {
+                    app.ui.confirm_stop_hosting = false;
+                    app.stop_hosting();
+                }
+                if ui.button("Cancel").clicked() {
+                    app.ui.confirm_stop_hosting = false;
+                }
+            });
+        });
 }

@@ -56,7 +56,7 @@ Run each instance with its own home so they do not share config and cache:
 10. B: Settings → My media folders → add a folder containing a renamed copy of a library
    file, Save → "Video files found" updates and that item plays from the local copy
    (Participants shows `local`). Copy another file there, press **Rescan** → it is found.
-   A in **Preload** plays library files directly (`local`), nothing is downloaded.
+   A (the host) has no Stream/Preload switch: library files play from disk (`local`).
 11. Long stall: throttle B (e.g. `--cache-secs=1` in extra args plus a slow link, or
     `tc qdisc add dev lo root netem rate 1mbit`) → after 10 s everyone waits for B and
     resumes once B has buffered.
@@ -64,6 +64,12 @@ Run each instance with its own home so they do not share config and cache:
 13. Play a library episode, seek close to its end, then close mpv in both windows
     (`q`): when the episode's time is up the playlist moves to the next one by itself.
 14. Close A's window → B shows "Server unavailable, reconnecting".
+15. A: **Stop hosting** with B in the room → a confirmation; confirm → B shows "Server
+    unavailable", A sees the join card with **Become host** again, and port 8740 is free
+    (`ss -ltn | grep 8740` prints nothing). Become host again works.
+16. Look: rows light up under the pointer, the current item has an accent bar, row actions
+    (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
+    instead of icons anywhere; Settings opens centred with cards.
 
 ## Manual: headless server over Tailscale
 

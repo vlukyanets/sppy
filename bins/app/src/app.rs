@@ -41,6 +41,8 @@ pub struct UiState {
     pub extra_args: String,
     pub subtitle_languages: String,
     pub confirm_kick: Option<(sppy_proto::ParticipantId, String)>,
+    /// "Stop hosting" was clicked while others are in the room.
+    pub confirm_stop_hosting: bool,
     /// The player could not start (shown as a banner with a Settings button).
     pub player_problem: Option<String>,
     /// This machine's addresses, refreshed while hosting or in the settings.
@@ -82,6 +84,7 @@ impl SppyApp {
         config: ClientConfig,
         paths: ClientPaths,
     ) -> Self {
+        ui::theme::apply(&cc.egui_ctx);
         // Repaint whenever the core publishes a new snapshot or event.
         let ctx = cc.egui_ctx.clone();
         let mut state = handle.state.clone();
@@ -111,6 +114,7 @@ impl SppyApp {
             extra_args: config.player.extra_args.join(" "),
             subtitle_languages: config.subtitle_languages.join(", "),
             confirm_kick: None,
+            confirm_stop_hosting: false,
             player_problem: None,
             local_ips: Vec::new(),
             local_ips_at: None,
@@ -187,6 +191,24 @@ impl SppyApp {
             let _ = tx.send(crate::host::become_host(cfg, dir).await.map_err(|e| e.to_string()));
         });
         self.host_starting = Some(rx);
+    }
+
+    /// Join the room of the server running here again (after Disconnect).
+    pub fn rejoin_own_room(&mut self) {
+        let Some(host) = &self.host else { return };
+        let cmd = UiCommand::BecomeHostConnect {
+            listen: host.local_addr,
+            host_token: host.host_token.clone(),
+        };
+        self.send(cmd);
+    }
+
+    /// Leave the room and stop the server running here; whoever is in it is disconnected.
+    pub fn stop_hosting(&mut self) {
+        self.send(UiCommand::Disconnect);
+        if let Some(host) = self.host.take() {
+            self.rt.spawn(host.shutdown());
+        }
     }
 
     pub fn host_starting(&self) -> bool {
@@ -293,32 +315,61 @@ impl eframe::App for SppyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let snap = self.snapshot();
         let ctx = ui.ctx().clone();
-        egui::Panel::top("connect").show(ui, |ui| ui::connect::show(self, ui, &snap));
-        egui::Panel::bottom("status").show(ui, |ui| ui::status_line(self, ui, &snap));
+        let online = matches!(
+            snap.connection,
+            sppy_client_core::api::ConnState::Connected
+                | sppy_client_core::api::ConnState::Reconnecting { .. }
+        );
+        if online {
+            let top = ui::theme::panel_frame(ui, egui::Margin::symmetric(14, 8));
+            egui::Panel::top("connect")
+                .frame(top)
+                .show(ui, |ui| ui::connect::show(self, ui, &snap));
+        }
+        let bottom = ui::theme::panel_frame(ui, egui::Margin::symmetric(14, 4));
+        egui::Panel::bottom("status").frame(bottom).show(ui, |ui| ui::status_line(self, ui, &snap));
         ui::settings::show(self, &ctx, &snap);
         ui::participants::kick_dialog(self, &ctx);
+        ui::connect::stop_hosting_dialog(self, &ctx);
         if snap.room.is_none() {
             self.ui.library_requested = false;
-            egui::CentralPanel::default().show(ui, |ui| ui::banners(self, ui, &snap));
+            let content = ui::theme::content_frame(ui);
+            egui::CentralPanel::default().frame(content).show(ui, |ui| {
+                ui::banners(self, ui, &snap);
+                if !online {
+                    ui::connect::join_card(self, ui, &snap);
+                }
+            });
             return;
         }
-        egui::Panel::left("people").resizable(true).default_size(300.0).show(ui, |ui| {
-            ui.heading("Participants");
-            ui::participants::show(self, ui, &snap);
-            if snap.is_host {
-                ui.add_space(4.0);
-                ui::host::show(self, ui, &snap);
-            }
-            ui.separator();
-            ui::chat::show(self, ui, &snap);
-        });
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui::banners(self, ui, &snap);
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.ui.tab, Tab::Playlist, "Playlist");
-                ui.selectable_value(&mut self.ui.tab, Tab::Library, "Library");
+        let side = ui::theme::panel_frame(ui, egui::Margin::symmetric(14, 10));
+        egui::Panel::left("people")
+            .frame(side)
+            .resizable(true)
+            .default_size(300.0)
+            .min_size(240.0)
+            .max_size(460.0)
+            .show(ui, |ui| {
+                ui::theme::section(ui, "Participants");
+                ui::participants::show(self, ui, &snap);
+                if snap.is_host {
+                    ui.add_space(6.0);
+                    ui::host::show(self, ui, &snap);
+                }
+                ui.add_space(8.0);
+                ui::chat::show(self, ui, &snap);
             });
-            ui.separator();
+        let content = ui::theme::content_frame(ui);
+        egui::CentralPanel::default().frame(content).show(ui, |ui| {
+            ui::banners(self, ui, &snap);
+            ui::playlist::now_playing(self, ui, &snap);
+            ui.add_space(10.0);
+            ui::theme::segmented(
+                ui,
+                &mut self.ui.tab,
+                &[(Tab::Playlist, "Playlist"), (Tab::Library, "Library")],
+            );
+            ui.add_space(6.0);
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 match self.ui.tab {
                     Tab::Playlist => ui::playlist::show(self, ui, &snap),

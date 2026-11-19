@@ -28,8 +28,7 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         if mode != room.control_mode {
             app.send(UiCommand::SetControlMode(mode));
         }
-        if ui.small_button("Rotate invite").on_hover_text("Old invite links stop working").clicked()
-        {
+        if ui.button("Rotate invite").on_hover_text("Old invite links stop working").clicked() {
             app.send(UiCommand::RotateInvite);
         }
     });

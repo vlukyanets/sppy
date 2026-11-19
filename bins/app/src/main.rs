@@ -41,7 +41,8 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("sppy")
-            .with_inner_size([420.0, 640.0]),
+            .with_inner_size([980.0, 640.0])
+            .with_min_inner_size([640.0, 420.0]),
         ..Default::default()
     };
     eframe::run_native(

@@ -3,7 +3,7 @@
 use sppy_client_core::api::{Snapshot, UiCommand};
 use sppy_proto::{ControlMode, Delivery, MediaStatus};
 
-use super::{GREEN, RED, YELLOW};
+use super::{GREEN, RED, YELLOW, theme};
 use crate::app::SppyApp;
 
 pub fn status_text(s: &MediaStatus) -> (String, egui::Color32) {
@@ -39,62 +39,81 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let Some(room) = &snap.room else { return };
     let playing = snap.playback.as_ref().is_some_and(|p| p.is_playing());
     for p in &room.participants {
-        ui.horizontal(|ui| {
-            let (dot, color) =
-                if p.connected { ("●", GREEN) } else { ("○", egui::Color32::GRAY) };
-            ui.colored_label(color, dot).on_hover_text(if p.connected {
-                "connected"
-            } else {
-                "disconnected"
-            });
-            let name = if Some(p.id) == snap.me {
-                format!("{} (you)", p.nickname)
-            } else {
-                p.nickname.clone()
-            };
-            ui.strong(name);
-            if p.is_host {
-                ui.small("host");
-            } else if p.can_control && room.control_mode == ControlMode::Selected {
-                ui.small("ctrl");
-            }
-            let (status, color) = status_text(&p.status);
-            ui.colored_label(color, status);
-            let entry = snap.progress.get(&p.id);
-            match entry.map(|e| &e.delivery) {
-                Some(Delivery::Download { bytes, total }) if *total > 0 && bytes < total => {
-                    ui.add(
-                        egui::ProgressBar::new(*bytes as f32 / *total as f32)
-                            .desired_width(70.0)
-                            .show_percentage(),
-                    );
-                }
-                Some(Delivery::Stream) => {
-                    ui.weak("stream");
-                }
-                Some(Delivery::Local | Delivery::Download { .. }) => {
-                    ui.weak("local");
-                }
-                None => {}
-            }
-            if playing && let Some(d) = entry.and_then(|e| e.drift_ms) {
-                let (text, color) = sync_text(d);
-                ui.colored_label(color, text).on_hover_text("Distance from the room position");
-            }
-            if snap.is_host && !p.is_host {
-                ui.menu_button("⋯", |ui| {
-                    if room.control_mode == ControlMode::Selected {
-                        let mut allowed = p.can_control;
-                        if ui.checkbox(&mut allowed, "May control playback").changed() {
-                            app.send(UiCommand::SetCanControl(p.id, allowed));
-                        }
+        let id = ui.scope_id().with(("participant", p.id));
+        theme::row(ui, id, false, |ui, _| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.horizontal(|ui| {
+                    let (dot, color) =
+                        if p.connected { ("●", GREEN) } else { ("○", theme::MUTED) };
+                    ui.colored_label(color, dot).on_hover_text(if p.connected {
+                        "connected"
+                    } else {
+                        "disconnected"
+                    });
+                    let mut name = egui::RichText::new(&p.nickname).strong();
+                    if !p.connected {
+                        name = name.color(theme::MUTED);
                     }
-                    if ui.button("Remove from the room…").clicked() {
-                        app.ui.confirm_kick = Some((p.id, p.nickname.clone()));
-                        ui.close();
+                    ui.add(egui::Label::new(name).truncate());
+                    if Some(p.id) == snap.me {
+                        ui.label(egui::RichText::new("you").small().color(theme::MUTED));
+                    }
+                    if p.is_host {
+                        theme::pill(ui, "host", theme::ACCENT);
+                    } else if p.can_control && room.control_mode == ControlMode::Selected {
+                        theme::pill(ui, "control", theme::ACCENT);
+                    }
+                    if snap.is_host && !p.is_host {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.menu_button("⋯", |ui| {
+                                if room.control_mode == ControlMode::Selected {
+                                    let mut allowed = p.can_control;
+                                    if ui.checkbox(&mut allowed, "May control playback").changed() {
+                                        app.send(UiCommand::SetCanControl(p.id, allowed));
+                                    }
+                                }
+                                if ui.button("Remove from the room…").clicked() {
+                                    app.ui.confirm_kick = Some((p.id, p.nickname.clone()));
+                                    ui.close();
+                                }
+                            });
+                        });
                     }
                 });
-            }
+                // Second line: what their player is doing.
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(18.0);
+                    let (status, color) = status_text(&p.status);
+                    theme::pill(ui, status, color);
+                    let entry = snap.progress.get(&p.id);
+                    match entry.map(|e| &e.delivery) {
+                        Some(Delivery::Download { bytes, total })
+                            if *total > 0 && bytes < total =>
+                        {
+                            ui.add(
+                                egui::ProgressBar::new(*bytes as f32 / *total as f32)
+                                    .desired_width(60.0)
+                                    .desired_height(8.0)
+                                    .fill(theme::ACCENT),
+                            )
+                            .on_hover_text("Downloading");
+                        }
+                        Some(Delivery::Stream) => {
+                            ui.label(egui::RichText::new("stream").small().color(theme::MUTED));
+                        }
+                        Some(Delivery::Local | Delivery::Download { .. }) => {
+                            ui.label(egui::RichText::new("local").small().color(theme::MUTED));
+                        }
+                        None => {}
+                    }
+                    if playing && let Some(d) = entry.and_then(|e| e.drift_ms) {
+                        let (text, color) = sync_text(d);
+                        ui.label(egui::RichText::new(text).small().monospace().color(color))
+                            .on_hover_text("Distance from the room position");
+                    }
+                });
+            });
         });
     }
 }

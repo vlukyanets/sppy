@@ -38,6 +38,8 @@ To build from source instead: `cargo build --release -p sppy-app -p sppy-server-
 3. Friends paste the link into **Invite link**, enter a nickname and click **Connect**.
 4. Add files from **Library** (or a URL) and press **Play**. Pause and seek either in the
    window or directly in mpv — everyone follows.
+5. **Stop hosting** (top right) leaves the room and stops the server; if others are still
+   in the room, the app asks first.
 
 When an episode ends the room moves on to the next one by itself. For library files the
 server knows their length (read from MKV, WebM, MP4, MOV and AVI headers, or from the
@@ -134,7 +136,11 @@ out: without one, sppy uses 8740.
 - **Preload** — the file is downloaded into the cache first (resumable; the next playlist
   item is fetched in advance). After repeated download failures sppy falls back to streaming.
 - **My media folders** — if a file with the same fingerprint is found there (any name,
-  any folder), it is played directly. A file can also be chosen by hand (📁).
+  any folder), it is played directly. A file can also be chosen by hand (*My file…* when
+  pointing at a playlist item).
+
+While you host, the switch is hidden: the library is your own folders, so its files always
+play from your disk.
 
 Downloads go to the cache: `~/.cache/sppy/media` on Linux,
 `%LOCALAPPDATA%\sppy\cache\media` on Windows (`$SPPY_HOME/.cache/media` when `SPPY_HOME`

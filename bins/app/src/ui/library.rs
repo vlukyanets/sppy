@@ -3,6 +3,7 @@
 use sppy_client_core::api::{Snapshot, UiCommand};
 use sppy_proto::{LibraryNode, Source};
 
+use super::theme;
 use crate::app::SppyApp;
 use crate::search::{files_under, search};
 
@@ -23,6 +24,48 @@ fn add_files(app: &SppyApp, ids: Vec<sppy_proto::FileId>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn file_row(
+    app: &SppyApp,
+    ui: &mut egui::Ui,
+    file_id: &sppy_proto::FileId,
+    name: &str,
+    folder: Option<&str>,
+    size: u64,
+    subs: bool,
+    can_add: bool,
+) {
+    let id = ui.scope_id().with(("library-file", file_id));
+    theme::row(ui, id, false, |ui, hovered| {
+        let add = can_add
+            && ui
+                .add(
+                    egui::Button::new(egui::RichText::new("+").strong().color(if hovered {
+                        theme::ACCENT
+                    } else {
+                        theme::MUTED
+                    }))
+                    .frame(false),
+                )
+                .on_hover_text("Add to the playlist")
+                .clicked();
+        let r = ui.add(egui::Label::new(name).truncate().sense(egui::Sense::click()));
+        let r = match folder {
+            Some(f) => r.on_hover_text(f),
+            None => r,
+        };
+        if add || (can_add && r.double_clicked()) {
+            add_files(app, vec![file_id.clone()]);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(human_size(size)).small().color(theme::MUTED));
+            if subs {
+                theme::pill(ui, "subs", theme::MUTED);
+            }
+        });
+    });
+}
+
 fn node(app: &mut SppyApp, ui: &mut egui::Ui, n: &LibraryNode, can_add: bool, depth: usize) {
     match n {
         LibraryNode::Dir { name, children } => {
@@ -33,10 +76,15 @@ fn node(app: &mut SppyApp, ui: &mut egui::Ui, n: &LibraryNode, can_add: bool, de
                 depth == 0,
             )
             .show_header(ui, |ui| {
-                ui.label(name);
+                ui.label(egui::RichText::new(name).strong());
                 if can_add
                     && ui
-                        .small_button("+ all")
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("+ add all").small().color(theme::ACCENT),
+                            )
+                            .frame(false),
+                        )
                         .on_hover_text("Add every file in this folder")
                         .clicked()
                 {
@@ -50,16 +98,7 @@ fn node(app: &mut SppyApp, ui: &mut egui::Ui, n: &LibraryNode, can_add: bool, de
             });
         }
         LibraryNode::File { file_id, name, size, subtitles, .. } => {
-            ui.horizontal(|ui| {
-                if can_add && ui.small_button("+").on_hover_text("Add to the playlist").clicked() {
-                    add_files(app, vec![file_id.clone()]);
-                }
-                ui.add(egui::Label::new(name).truncate());
-                ui.weak(human_size(*size));
-                if !subtitles.is_empty() {
-                    ui.weak("subs");
-                }
-            });
+            file_row(app, ui, file_id, name, None, *size, !subtitles.is_empty(), can_add);
         }
     }
 }
@@ -74,12 +113,13 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         ui.add(
             egui::TextEdit::singleline(&mut app.ui.library_query)
                 .hint_text("Search")
-                .desired_width(240.0),
+                .margin(egui::Margin::symmetric(8, 5))
+                .desired_width(280.0),
         );
-        if !app.ui.library_query.is_empty() && ui.small_button("✕").clicked() {
+        if !app.ui.library_query.is_empty() && ui.button("✕").clicked() {
             app.ui.library_query.clear();
         }
-        if snap.is_host && ui.small_button("Rescan").clicked() {
+        if snap.is_host && ui.button("Rescan").clicked() {
             app.send(UiCommand::RescanLibrary);
             // The library folders are also where this computer finds its local copies.
             app.apply_media_folders(true);
@@ -109,19 +149,10 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     if hits.is_empty() {
         ui.weak("Nothing found.");
     }
-    if can_add
-        && hits.len() > 1
-        && ui.small_button(format!("+ all {} results", hits.len())).clicked()
-    {
+    if can_add && hits.len() > 1 && ui.button(format!("+ all {} results", hits.len())).clicked() {
         add_files(app, hits.iter().map(|h| h.file_id.clone()).collect());
     }
     for h in hits {
-        ui.horizontal(|ui| {
-            if can_add && ui.small_button("+").clicked() {
-                add_files(app, vec![h.file_id.clone()]);
-            }
-            ui.add(egui::Label::new(&h.name).truncate()).on_hover_text(&h.folder);
-            ui.weak(human_size(h.size));
-        });
+        file_row(app, ui, &h.file_id, &h.name, Some(&h.folder), h.size, false, can_add);
     }
 }
