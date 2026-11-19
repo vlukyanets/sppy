@@ -259,7 +259,9 @@ async fn folders_outside_the_media_root_are_refused() {
     let s = setup_with(true, |_| Some(root)).await;
     let mut h = host(&s).await;
     h.recv_until(is_folders).await;
-    let outside = [path_str(&s.series), "/".to_owned(), path_str(&inside.join("../.."))];
+    // The file system root is `/`, or `C:\` on Windows, where `/` is not absolute.
+    let fs_root = base.path().ancestors().last().unwrap();
+    let outside = [path_str(&s.series), path_str(fs_root), path_str(&inside.join("../.."))];
     for (i, path) in outside.into_iter().enumerate() {
         let req_id = i as u32 + 1;
         h.send(ClientMsg::AddMediaFolder { req_id, path, name: None }).await;

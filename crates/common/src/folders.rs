@@ -172,7 +172,9 @@ mod tests {
         assert_eq!(check_within(&movies, &root), Ok(()));
         assert_eq!(check_within(&root, &root), Ok(()));
         assert_eq!(check_within(&outside, &root), Err(MediaFolderProblem::OutsideMediaRoot));
-        assert_eq!(check_within(Path::new("/"), &root), Err(MediaFolderProblem::OutsideMediaRoot));
+        // The root of the file system (`/`, or `C:\` on Windows, where `/` is not absolute).
+        let fs_root = dir.path().ancestors().last().expect("a path has a root");
+        assert_eq!(check_within(fs_root, &root), Err(MediaFolderProblem::OutsideMediaRoot));
         let dots = root.join("../private");
         assert_eq!(check_within(&dots, &root), Err(MediaFolderProblem::OutsideMediaRoot));
         assert_eq!(check_within(Path::new("media"), &root), Err(MediaFolderProblem::NotAbsolute));
