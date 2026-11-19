@@ -248,6 +248,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     }
     if save {
         app.send(UiCommand::SetTrustedSites(app.config.trusted_sites.clone()));
+        app.send(UiCommand::SetSubtitleLanguages(app.config.subtitle_languages.clone()));
     }
     if save || rescan {
         app.apply_media_folders(rescan);

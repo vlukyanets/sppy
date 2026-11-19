@@ -73,6 +73,8 @@ pub enum UiCommand {
     SkipLink(ItemId),
     /// Sites whose links play without asking (saved by the app).
     SetTrustedSites(Vec<String>),
+    /// Preferred subtitle languages, most wanted first; apply from the next item.
+    SetSubtitleLanguages(Vec<String>),
 }
 
 /// Someone else's link to a site not trusted yet is the current item: open it or not?

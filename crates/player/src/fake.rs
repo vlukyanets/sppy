@@ -36,6 +36,7 @@ impl Default for FakeConfig {
 pub enum FakeCmd {
     Load(MediaSource),
     SubAdd(MediaSource),
+    SubtitleLanguages(Vec<String>),
     Play,
     Pause,
     Seek(u64),
@@ -176,7 +177,7 @@ impl FakePlayer {
             FakeCmd::Pause => set_pause(&self.state, true),
             FakeCmd::Seek(ms) => seek(&self.state, ms),
             FakeCmd::SetSpeed(x) => set_speed(&self.state, x),
-            FakeCmd::SubAdd(_) | FakeCmd::Osd(_) => {}
+            FakeCmd::SubAdd(_) | FakeCmd::SubtitleLanguages(_) | FakeCmd::Osd(_) => {}
         }
         Ok(())
     }
@@ -242,6 +243,10 @@ impl Player for FakePlayer {
             self.command(FakeCmd::SubAdd(sub)).await?;
         }
         Ok(())
+    }
+
+    async fn set_subtitle_languages(&mut self, languages: &[String]) -> PlayerResult {
+        self.command(FakeCmd::SubtitleLanguages(languages.to_vec())).await
     }
 
     async fn play(&mut self) -> PlayerResult {

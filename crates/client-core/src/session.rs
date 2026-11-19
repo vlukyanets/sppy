@@ -378,6 +378,9 @@ impl<L: PlayerLauncher> Session<L> {
                     message: format!("Skipped the link to {}", q.site),
                 });
             }
+            UiCommand::SetSubtitleLanguages(languages) => {
+                self.config.subtitle_languages = languages;
+            }
             UiCommand::SetTrustedSites(sites) => {
                 self.config.trusted_sites = sites;
                 self.reload_asked_link().await;
@@ -944,6 +947,11 @@ impl<L: PlayerLauncher> Session<L> {
             ..MediaState::default()
         };
         self.echo.issued(self.local_ms(), PendingOp::Load);
+        if let Some(p) = &mut self.player
+            && let Err(e) = p.set_subtitle_languages(&self.config.subtitle_languages).await
+        {
+            tracing::warn!("cannot set subtitle languages: {e}");
+        }
         if let Some(p) = &mut self.player
             && let Err(e) = p.load(media, subs).await
         {

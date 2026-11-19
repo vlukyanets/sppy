@@ -74,6 +74,12 @@ pub trait Player: Send + 'static {
         media: MediaSource,
         subtitles: Vec<MediaSource>,
     ) -> impl Future<Output = PlayerResult> + Send;
+    /// Preferred subtitle languages (e.g. `["ru", "en"]`), for the next `load` to pick a
+    /// subtitle track inside the file; empty for the player's own choice.
+    fn set_subtitle_languages(
+        &mut self,
+        languages: &[String],
+    ) -> impl Future<Output = PlayerResult> + Send;
     fn play(&mut self) -> impl Future<Output = PlayerResult> + Send;
     fn pause(&mut self) -> impl Future<Output = PlayerResult> + Send;
     /// Exact seek to an absolute position.

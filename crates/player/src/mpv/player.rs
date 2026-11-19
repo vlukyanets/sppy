@@ -133,6 +133,44 @@ fn utf8_alias(path: &std::path::Path, _links: &mut Vec<PathBuf>) -> PlayerResult
     Err(PlayerError::Ipc(format!("path is not valid Unicode: {}", path.display())))
 }
 
+/// mpv's `slang`: the languages as given plus their other ISO 639 form, since files name
+/// languages either way (`en` / `eng`) and older mpv versions match them literally.
+fn slang(languages: &[String]) -> String {
+    const PAIRS: &[(&str, &[&str])] = &[
+        ("en", &["eng"]),
+        ("ru", &["rus"]),
+        ("uk", &["ukr"]),
+        ("de", &["deu", "ger"]),
+        ("fr", &["fra", "fre"]),
+        ("es", &["spa"]),
+        ("it", &["ita"]),
+        ("pt", &["por"]),
+        ("pl", &["pol"]),
+        ("ja", &["jpn"]),
+        ("ko", &["kor"]),
+        ("zh", &["zho", "chi"]),
+    ];
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |code: &str| {
+        if !code.is_empty() && !out.iter().any(|c| c == code) {
+            out.push(code.to_owned());
+        }
+    };
+    for lang in languages {
+        let lang = lang.trim().to_ascii_lowercase();
+        push(&lang);
+        for (two, three) in PAIRS {
+            if lang == *two {
+                three.iter().for_each(|c| push(c));
+            } else if three.contains(&lang.as_str()) {
+                push(two);
+                three.iter().for_each(|c| push(c));
+            }
+        }
+    }
+    out.join(",")
+}
+
 fn remove_links(links: &mut Vec<PathBuf>) {
     for l in links.drain(..) {
         let _ = std::fs::remove_file(l);
@@ -339,6 +377,10 @@ impl Player for MpvPlayer {
         self.cmd(vec![json!("loadfile"), json!(src), json!("replace")]).await
     }
 
+    async fn set_subtitle_languages(&mut self, languages: &[String]) -> PlayerResult {
+        self.cmd(vec![json!("set_property"), json!("slang"), json!(slang(languages))]).await
+    }
+
     async fn play(&mut self) -> PlayerResult {
         self.cmd(vec![json!("set_property"), json!("pause"), json!(false)]).await
     }
@@ -362,6 +404,20 @@ impl Player for MpvPlayer {
 
     async fn next_event(&mut self) -> Option<PlayerEvent> {
         self.events.recv().await
+    }
+}
+
+#[cfg(test)]
+mod slang_tests {
+    use super::slang;
+
+    #[test]
+    fn languages_get_both_iso_forms_in_order() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(slang(&l(&["ru", "en"])), "ru,rus,en,eng");
+        assert_eq!(slang(&l(&["ENG", " ger "])), "eng,en,ger,de,deu");
+        assert_eq!(slang(&l(&["en", "eng", "xx"])), "en,eng,xx");
+        assert_eq!(slang(&[]), "");
     }
 }
 
