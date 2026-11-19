@@ -26,9 +26,18 @@ jobs:
           # The cache key ignores the image version; C objects built on a newer
           # glibc must not reach an older image.
           key: ${{ matrix.os }}
+      # Hosted runners start clean every time; the .deb files of mpv and its
+      # libraries are kept in the Actions cache instead of being downloaded again.
       - name: Install mpv
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mpv
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: mpv
+          version: ${{ matrix.os }}-1
+          execute_install_scripts: true
+      - name: Check mpv
+        if: runner.os == 'Linux'
+        run: mpv --version | head -1
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
