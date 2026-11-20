@@ -34,18 +34,22 @@ jobs:
           # The cache key ignores the image version; C objects built on a newer
           # glibc must not reach an older image.
           key: ${{ matrix.os }}
-      # Hosted runners start clean every time; the .deb files of mpv and its
-      # libraries are kept in the Actions cache instead of being downloaded again.
-      - name: Install mpv
+      # Hosted runners start clean every time; the .deb files of the players and
+      # their libraries are kept in the Actions cache instead of being downloaded again.
+      # vlc-bin and vlc-plugin-base are VLC without its window: enough for the tests,
+      # which run it with the dummy interface and the Lua module.
+      - name: Install mpv and VLC
         if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: mpv
-          version: ${{ matrix.os }}-1
+          packages: mpv vlc-bin vlc-plugin-base
+          version: ${{ matrix.os }}-2
           execute_install_scripts: true
-      - name: Check mpv
+      - name: Check the players
         if: runner.os == 'Linux'
-        run: mpv --version | head -1
+        run: |
+          mpv --version | head -1
+          vlc --version 2>/dev/null | head -1
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
