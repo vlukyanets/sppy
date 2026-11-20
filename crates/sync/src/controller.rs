@@ -43,6 +43,8 @@ pub struct DriftController {
     settle_until: u64,
     correcting: bool,
     seek_issued: bool,
+    /// Drift when our last seek landed (`seek_landed`): that seek's own error.
+    landed_drift: Option<i64>,
     seek_lead_ms: u64,
     reseeks: u32,
     commanded_speed: Option<f64>,
@@ -59,10 +61,20 @@ impl DriftController {
             settle_until: 0,
             correcting: false,
             seek_issued: false,
+            landed_drift: None,
             seek_lead_ms: 0,
             reseeks: 0,
             commanded_speed: None,
             last_pause_cmd: None,
+        }
+    }
+
+    /// Our seek landed (the player reports where playback restarted). The drift at this
+    /// moment is the seek's own error; whatever happens later (a stall during the
+    /// settle time) is ordinary drift and must not teach the seek lead.
+    pub fn seek_landed(&mut self, target: &Target, position_ms: u64) {
+        if self.seek_issued && self.landed_drift.is_none() {
+            self.landed_drift = Some(position_ms as i64 - target.position_ms as i64);
         }
     }
 
@@ -114,6 +126,7 @@ impl DriftController {
                         position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
                     });
                     self.seek_issued = true;
+                    self.landed_drift = None;
                     self.reseeks = 0;
                 }
                 self.settle_until = now_ms.saturating_add(self.p.settle_ms);
@@ -160,6 +173,7 @@ impl DriftController {
                 position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
             });
             self.seek_issued = true;
+            self.landed_drift = None;
             self.reseeks = 0;
             self.correcting = false;
             self.settle_until = now_ms.saturating_add(self.p.settle_ms);
@@ -171,20 +185,24 @@ impl DriftController {
 
         if self.seek_issued {
             self.seek_issued = false;
-            if abs > self.p.dead_band_ms {
-                if drift < 0 {
+            // Without a landing report (a player that does not tell), the drift now.
+            let error = self.landed_drift.take().unwrap_or(drift);
+            let error_abs = error.unsigned_abs();
+            if error_abs > self.p.dead_band_ms {
+                if error < 0 {
                     self.seek_lead_ms =
-                        self.seek_lead_ms.saturating_add(abs).min(self.p.max_seek_lead_ms);
+                        self.seek_lead_ms.saturating_add(error_abs).min(self.p.max_seek_lead_ms);
                 } else {
-                    self.seek_lead_ms = self.seek_lead_ms.saturating_sub(abs);
+                    self.seek_lead_ms = self.seek_lead_ms.saturating_sub(error_abs);
                 }
             }
-            if abs > self.p.reseek_threshold_ms && self.reseeks < MAX_RESEEKS {
+            if error_abs > self.p.reseek_threshold_ms && self.reseeks < MAX_RESEEKS {
                 self.reseeks += 1;
                 out.push(Correction::Seek {
                     position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
                 });
                 self.seek_issued = true;
+                self.landed_drift = None;
                 self.correcting = false;
                 self.settle_until = now_ms.saturating_add(self.p.settle_ms);
                 return out;
@@ -207,6 +225,7 @@ impl DriftController {
                     position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
                 });
                 self.seek_issued = true;
+                self.landed_drift = None;
                 self.reseeks = 0;
                 self.settle_until = now_ms.saturating_add(self.p.settle_ms);
             }

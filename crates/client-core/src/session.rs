@@ -1229,7 +1229,14 @@ impl<L: PlayerLauncher> Session<L> {
         let now = self.local_ms();
         let position_ms = self.observed_position(now);
         match self.echo.observe(now, ev, position_ms) {
-            Classified::Ours | Classified::Ignored => {}
+            Classified::Ours => {
+                if let RawEvent::Seeked { position_ms } = ev
+                    && let Some((target, _)) = self.target(now)
+                {
+                    self.controller.seek_landed(&target, position_ms);
+                }
+            }
+            Classified::Ignored => {}
             Classified::User(action) => {
                 let req = match action {
                     UserAction::Pause { position_ms } => self.request(|req_id| ClientMsg::Pause {
@@ -1284,20 +1291,7 @@ impl<L: PlayerLauncher> Session<L> {
         {
             return;
         }
-        let Some(pb) = self.snap.playback.clone() else { return };
-        if pb.item_id != self.media.item {
-            return;
-        }
-        let Some(now_server) =
-            self.conn.as_ref().and_then(|c| c.clock.lock().expect("clock").to_server_ms(now))
-        else {
-            return;
-        };
-        let target = Target {
-            position_ms: pb.expected_position_ms(now_server),
-            playing: pb.is_playing(),
-            room_speed: pb.speed,
-        };
+        let Some((target, pb)) = self.target(now) else { return };
         let observed = Observed {
             position_ms: self.observed_position(now),
             paused: self.media.paused,
@@ -1324,6 +1318,22 @@ impl<L: PlayerLauncher> Session<L> {
         for c in self.controller.update(now, &target, &observed) {
             self.apply_correction(now, c, &pb).await;
         }
+    }
+
+    /// Where the room is now, for the current item.
+    fn target(&self, now: u64) -> Option<(Target, PlaybackState)> {
+        let pb = self.snap.playback.clone()?;
+        if pb.item_id != self.media.item {
+            return None;
+        }
+        let now_server =
+            self.conn.as_ref().and_then(|c| c.clock.lock().expect("clock").to_server_ms(now))?;
+        let target = Target {
+            position_ms: pb.expected_position_ms(now_server),
+            playing: pb.is_playing(),
+            room_speed: pb.speed,
+        };
+        Some((target, pb))
     }
 
     async fn apply_correction(&mut self, now: u64, c: Correction, _pb: &PlaybackState) {

@@ -35,11 +35,7 @@ async fn fall_behind(b: &Peer) {
     fall_behind_by(b, 1000).await;
 }
 
-/// First the start settles: right after its own seek, the controller would take the stall
-/// for a slow seek and learn a seek lead from it.
 async fn fall_behind_by(b: &Peer, ms: u64) {
-    let settle = sppy_sync::SyncParams::default().settle_ms;
-    tokio::time::sleep(Duration::from_millis(settle + 500)).await;
     b.remote().set_buffering(true);
     tokio::time::sleep(Duration::from_millis(ms)).await;
     b.remote().set_buffering(false);
@@ -110,6 +106,27 @@ async fn speed_mode_catches_up_with_speed() {
     fall_behind(&b).await;
     eventually("b sped up", 5, || !speed_changes(&b).is_empty()).await;
     assert_eq!(seeks(&b), before, "a second behind is closed by speed, not a seek");
+    server.shutdown().await;
+}
+
+/// The stall comes right after b's own start seek, before the controller looked at the
+/// seek's result: it must not take the stall for a slow seek.
+#[tokio::test]
+async fn a_stall_right_after_our_seek_is_closed_by_speed() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    add_and_play(&a, &["u1"]).await;
+    eventually("b seeked to the room", 8, || seeks(&b) > 0).await;
+    let before = seeks(&b);
+    b.remote().set_buffering(true);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    b.remote().set_buffering(false);
+    eventually("b sped up", 5, || !speed_changes(&b).is_empty()).await;
+    // The old code seeked twice within a second of the settle time ending.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    assert_eq!(seeks(&b), before, "no seek with a lead learned from the stall");
     server.shutdown().await;
 }
 

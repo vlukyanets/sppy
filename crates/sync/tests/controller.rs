@@ -354,3 +354,35 @@ fn huge_thresholds_do_not_overflow() {
     assert!(c.contains(&Correction::Seek { position_ms: 10_000 }), "{c:?}");
     k.update(1000, &target(11_000), &obs(10_000, 1.0));
 }
+
+/// The seek's error is what the player shows when the seek lands; a stall after that is
+/// ordinary drift, not a slow seek.
+#[test]
+fn a_stall_after_the_seek_landed_is_not_learned_as_seek_lead() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0)); // seek to 10 000
+    k.seek_landed(&target(10_150), 10_000); // landed 150 ms late
+    // Then the player stalled for a second.
+    let c = k.update(1000, &target(11_000), &obs(9_850, 1.0));
+    assert_eq!(k.seek_lead_ms(), 150, "learned from the landing only");
+    assert!(c.iter().all(|c| !matches!(c, Correction::Seek { .. })), "{c:?}");
+    assert!(speed_of(&c).is_some_and(|s| s > 1.0), "the stall is closed by speed: {c:?}");
+}
+
+#[test]
+fn a_slow_landing_still_reseeks_with_lead() {
+    let mut k = ctl();
+    k.update(0, &target(10_000), &obs(5_000, 1.0));
+    k.seek_landed(&target(10_500), 10_000); // landed 500 ms late
+    let c = k.update(1000, &target(11_000), &obs(10_500, 1.0));
+    assert_eq!(k.seek_lead_ms(), 500);
+    assert!(c.contains(&Correction::Seek { position_ms: 11_500 }), "{c:?}");
+}
+
+#[test]
+fn a_landing_without_our_seek_teaches_nothing() {
+    let mut k = ctl();
+    k.seek_landed(&target(10_500), 10_000);
+    k.update(1000, &target(11_000), &obs(11_000, 1.0));
+    assert_eq!(k.seek_lead_ms(), 0);
+}
