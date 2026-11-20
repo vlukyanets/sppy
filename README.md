@@ -7,7 +7,8 @@ player (mpv for now) that sppy keeps in sync. Media comes from the server's libr
 (streamed or preloaded into a local cache), from a matching copy on the participant's
 own disk, or from any URL mpv can open.
 
-Status: stage 1 (mpv only).
+Status: early development. Works with mpv on Linux and Windows; VLC support comes next.
+Everyone in a room needs the same version of sppy.
 
 ## Install
 
