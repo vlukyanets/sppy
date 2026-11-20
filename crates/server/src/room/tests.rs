@@ -368,6 +368,7 @@ pub(super) fn url_item(id: u64, duration_ms: Option<u64>) -> Item {
         fingerprint: None,
         subtitles: vec![],
         added_by: ParticipantId(1),
+        watched: false,
     }
 }
 
@@ -1776,5 +1777,166 @@ mod ready_check {
         let (r, _, _) = starting_room();
         let restored = Room::restore(config(), r.persisted(1_000));
         assert!(restored.state().ready_check);
+    }
+}
+
+mod playlist_modes {
+    use super::*;
+
+    /// Three 10 s library files a, b, c; item 1 plays from 0 at time 0.
+    fn three_items() -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let info = |id: &str| FileInfo { duration_ms: Some(10_000), ..file_info(id) };
+        r.set_library(0, vec![info("a"), info("b"), info("c")]);
+        add(&mut r, 0, h, vec![file_src("a"), file_src("b"), file_src("c")], None);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 1, item_id: ItemId(1) });
+        start(&mut r, 0, [h, g], 1);
+        (r, h, g)
+    }
+
+    fn start(r: &mut Room, now: u64, who: [ParticipantId; 2], item: u64) {
+        for p in who {
+            status(r, now, p, item, ready());
+        }
+        assert!(r.playback().is_playing(), "{:?}", r.playback());
+    }
+
+    fn repeat(r: &mut Room, pid: ParticipantId, repeat: Repeat) -> Vec<Effect> {
+        r.command(0, pid, ClientMsg::SetRepeat { req_id: 9, repeat })
+    }
+
+    fn watched(r: &Room) -> Vec<bool> {
+        r.state().playlist.iter().map(|i| i.watched).collect()
+    }
+
+    #[test]
+    fn an_item_played_to_its_end_is_watched() {
+        let (mut r, _, _) = three_items();
+        assert_eq!(watched(&r), [false, false, false]);
+        let effects = r.tick(10_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(2)));
+        assert_eq!(watched(&r), [true, false, false]);
+        assert!(effects.contains(&Effect::Persist), "the mark is saved");
+    }
+
+    #[test]
+    fn a_skipped_or_left_item_is_not_watched() {
+        let (mut r, h, _) = three_items();
+        r.command(5_000, h, ClientMsg::PlaylistSelect { req_id: 2, item_id: ItemId(3) });
+        assert_eq!(watched(&r), [false, false, false]);
+    }
+
+    #[test]
+    fn the_mark_can_be_set_and_cleared_by_those_who_edit_the_playlist() {
+        let (mut r, h, g) = three_items();
+        let msg = |req_id, watched| ClientMsg::SetWatched { req_id, item_id: ItemId(2), watched };
+        let effects = r.command(0, h, msg(3, true));
+        assert_eq!(watched(&r), [false, true, false]);
+        assert!(effects.contains(&Effect::Persist));
+        r.command(0, h, ClientMsg::SetControlMode { req_id: 4, mode: ControlMode::HostOnly });
+        assert_denied(&r.command(0, g, msg(5, false)), g, 5, ErrorCode::NotPermitted);
+        r.command(0, h, msg(6, false));
+        assert_eq!(watched(&r), [false, false, false]);
+        let unknown = ClientMsg::SetWatched { req_id: 7, item_id: ItemId(99), watched: true };
+        assert_denied(&r.command(0, h, unknown), h, 7, ErrorCode::UnknownItem);
+    }
+
+    #[test]
+    fn repeat_one_plays_the_item_again() {
+        let (mut r, h, g) = three_items();
+        let effects = repeat(&mut r, h, Repeat::One);
+        assert!(has_notice(&effects, |a| *a == NoticeAction::RepeatChanged { repeat: Repeat::One }));
+        assert_eq!(r.state().repeat, Repeat::One);
+        r.tick(10_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        assert_eq!(r.playback().expected_position_ms(10_000), 0);
+        assert!(r.playback().hold.is_some(), "starts like any new item");
+        start(&mut r, 10_000, [h, g], 1);
+        assert_eq!(watched(&r), [true, false, false]);
+    }
+
+    #[test]
+    fn repeat_all_goes_from_the_last_item_to_the_first() {
+        let (mut r, h, g) = three_items();
+        repeat(&mut r, h, Repeat::All);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 2, item_id: ItemId(3) });
+        start(&mut r, 0, [h, g], 3);
+        r.tick(10_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(1)));
+        assert!(!r.playback().paused);
+    }
+
+    #[test]
+    fn without_repeat_the_room_stops_after_the_last_item() {
+        let (mut r, h, g) = three_items();
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 2, item_id: ItemId(3) });
+        start(&mut r, 0, [h, g], 3);
+        r.tick(10_000);
+        assert_eq!(r.playback().item_id, Some(ItemId(3)));
+        assert!(r.playback().paused);
+        assert_eq!(watched(&r), [false, false, true]);
+    }
+
+    #[test]
+    fn repeat_needs_control() {
+        let (mut r, h, g) = three_items();
+        r.command(0, h, ClientMsg::SetControlMode { req_id: 4, mode: ControlMode::HostOnly });
+        assert_denied(&repeat(&mut r, g, Repeat::All), g, 9, ErrorCode::NotPermitted);
+        assert_eq!(r.state().repeat, Repeat::Off);
+    }
+
+    #[test]
+    fn shuffle_reorders_only_what_comes_after_the_current_item() {
+        let mut r = room();
+        let h = host(&mut r);
+        let urls: Vec<Source> =
+            (0..20).map(|i| Source::Url { url: format!("https://x/{i}") }).collect();
+        add(&mut r, 0, h, urls, None);
+        r.command(0, h, ClientMsg::PlaylistSelect { req_id: 2, item_id: ItemId(5) });
+        let before = playlist_ids(&r);
+        let effects = r.command(1_234, h, ClientMsg::PlaylistShuffle { req_id: 3 });
+        let after = playlist_ids(&r);
+        assert_eq!(after[..5], before[..5], "the current item and those before stay");
+        assert_ne!(after[5..], before[5..], "the rest is in another order");
+        let mut sorted = after.clone();
+        sorted.sort();
+        assert_eq!(sorted, before, "nothing lost or doubled");
+        assert_eq!(r.playback().item_id, Some(ItemId(5)), "playback is not touched");
+        assert!(has_notice(&effects, |a| *a == NoticeAction::PlaylistShuffled));
+        assert!(effects.contains(&Effect::Persist));
+        // Another moment, another order.
+        r.command(99_999, h, ClientMsg::PlaylistShuffle { req_id: 4 });
+        assert_ne!(playlist_ids(&r), after);
+    }
+
+    #[test]
+    fn shuffle_needs_control() {
+        let (mut r, h, g) = three_items();
+        r.command(0, h, ClientMsg::SetControlMode { req_id: 4, mode: ControlMode::HostOnly });
+        let effects = r.command(0, g, ClientMsg::PlaylistShuffle { req_id: 5 });
+        assert_denied(&effects, g, 5, ErrorCode::NotPermitted);
+    }
+
+    #[test]
+    fn repeat_and_marks_survive_a_restart() {
+        let (mut r, h, _) = three_items();
+        repeat(&mut r, h, Repeat::All);
+        r.tick(10_000);
+        let restored = Room::restore(config(), r.persisted(10_000));
+        assert_eq!(restored.state().repeat, Repeat::All);
+        assert_eq!(watched(&restored), [true, false, false]);
+    }
+
+    #[test]
+    fn a_state_file_from_before_reads_as_unwatched_without_repeat() {
+        let old = r#"{"version":1,"playlist":[{"item_id":1,"source":{"kind":"Url","url":"u"},
+            "title":"t","subtitles":[],"added_by":1}],"next_item_id":2,"current":1,
+            "position_ms":0,"control_mode":"Everyone"}"#;
+        let state: PersistedState = serde_json::from_str(old).unwrap();
+        let r = Room::restore(config(), state);
+        assert_eq!(r.state().repeat, Repeat::Off);
+        assert_eq!(watched(&r), [false]);
     }
 }

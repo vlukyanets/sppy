@@ -2,8 +2,24 @@
 
 use sppy_proto::{
     ErrorCode, FileId, Fingerprint, Hold, HoldReason, Item, ItemId, MediaStatus, NoticeAction,
-    ParticipantId, ReqId, SkipReason, Source, Subtitle,
+    ParticipantId, Repeat, ReqId, SkipReason, Source, Subtitle,
 };
+
+/// Fisher–Yates with a small generator (splitmix64): enough for a playlist, no dependency.
+fn shuffle<T>(items: &mut [T], seed: u64) {
+    let mut state = seed;
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    for i in (1..items.len()).rev() {
+        let j = (next() % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
+}
 
 use super::{Effect, MAX_PLAYLIST_ITEMS, MAX_URL_CHARS, Room};
 
@@ -85,6 +101,7 @@ impl Room {
                 fingerprint,
                 subtitles,
                 added_by: pid,
+                watched: false,
             });
         }
         // Without a place, at the end: the client may not know the items it added a moment
@@ -185,6 +202,60 @@ impl Room {
         let mut effects = self.change_item(now_ms, Some(item_id));
         effects.push(Effect::Persist);
         effects
+    }
+
+    /// Put the items after the current one (all of them without one) in a random order.
+    /// The room stays pure: the order comes from the time of the request.
+    pub(super) fn playlist_shuffle(
+        &mut self,
+        now_ms: u64,
+        pid: ParticipantId,
+        req_id: ReqId,
+    ) -> Vec<Effect> {
+        if !self.can_control(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotPermitted);
+        }
+        let start = self.playback.item_id.and_then(|id| self.position_of(id)).map_or(0, |p| p + 1);
+        shuffle(&mut self.playlist[start..], now_ms ^ self.next_item_id.rotate_left(32));
+        vec![
+            self.broadcast_room(),
+            Self::notice(Some(pid), NoticeAction::PlaylistShuffled),
+            Effect::Persist,
+        ]
+    }
+
+    pub(super) fn set_watched(
+        &mut self,
+        pid: ParticipantId,
+        req_id: ReqId,
+        item_id: ItemId,
+        watched: bool,
+    ) -> Vec<Effect> {
+        if !self.can_control(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotPermitted);
+        }
+        let Some(item) = self.playlist.iter_mut().find(|i| i.item_id == item_id) else {
+            return self.denied(pid, req_id, ErrorCode::UnknownItem);
+        };
+        item.watched = watched;
+        vec![self.broadcast_room(), Effect::Persist]
+    }
+
+    pub(super) fn set_repeat(
+        &mut self,
+        pid: ParticipantId,
+        req_id: ReqId,
+        repeat: Repeat,
+    ) -> Vec<Effect> {
+        if !self.can_control(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotPermitted);
+        }
+        self.repeat = repeat;
+        vec![
+            self.broadcast_room(),
+            Self::notice(Some(pid), NoticeAction::RepeatChanged { repeat }),
+            Effect::Persist,
+        ]
     }
 
     /// Make `item_id` current (skipping items whose file vanished), or clear the current item.

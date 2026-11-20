@@ -98,6 +98,7 @@ fn item(id: u64, file_id: &str, sub_ext: &str) -> Item {
         fingerprint: Some(Fingerprint { size: 25, hash: "00".repeat(32) }),
         subtitles: vec![Subtitle { index: 1, label: None, ext: sub_ext.into() }],
         added_by: ParticipantId(99),
+        watched: false,
     }
 }
 
@@ -108,6 +109,7 @@ fn room(playlist: Vec<Item>) -> RoomState {
         control_mode: ControlMode::Everyone,
         lag_policy: LagPolicy::default(),
         ready_check: true,
+        repeat: Default::default(),
         playlist,
         settings: RoomSettings { stall_hold_secs: u32::MAX, resume_buffer_secs: u32::MAX },
     }

@@ -162,6 +162,7 @@ mod tests {
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
             ready_check,
+            repeat: Repeat::Off,
             playlist: vec![],
             settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
         };

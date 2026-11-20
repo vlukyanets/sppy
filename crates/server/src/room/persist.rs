@@ -1,7 +1,7 @@
 //! Snapshot of the room that survives a server restart (spec §4.8).
 
 use serde::{Deserialize, Serialize};
-use sppy_proto::{ControlMode, Item, ItemId, LagPolicy};
+use sppy_proto::{ControlMode, Item, ItemId, LagPolicy, Repeat};
 
 use super::{Room, RoomConfig};
 
@@ -20,6 +20,8 @@ pub struct PersistedState {
     pub lag_policy: LagPolicy,
     #[serde(default)]
     pub ready_check: bool,
+    #[serde(default)]
+    pub repeat: Repeat,
 }
 
 impl Room {
@@ -33,6 +35,7 @@ impl Room {
             control_mode: self.control_mode,
             lag_policy: self.lag_policy,
             ready_check: self.ready_check,
+            repeat: self.repeat,
         }
     }
 
@@ -45,6 +48,7 @@ impl Room {
         room.control_mode = state.control_mode;
         room.lag_policy = state.lag_policy;
         room.ready_check = state.ready_check;
+        room.repeat = state.repeat;
         room.playback.item_id = current;
         room.playback.position_ms = if current.is_some() { state.position_ms } else { 0 };
         room.playback.paused = true;

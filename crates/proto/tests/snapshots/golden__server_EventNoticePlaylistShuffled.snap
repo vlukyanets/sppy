@@ -1,0 +1,12 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "Event",
+  "kind": "Notice",
+  "actor": 1,
+  "action": {
+    "kind": "PlaylistShuffled"
+  }
+}

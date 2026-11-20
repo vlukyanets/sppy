@@ -2,7 +2,7 @@
 
 use sppy_proto::{
     ChatMessage, Delivery, ErrorCode, Event, Hold, HoldReason, ItemId, MediaStatus, NoticeAction,
-    ParticipantId, ProgressEntry, ReqId, ServerMsg, SkipReason, Source,
+    ParticipantId, ProgressEntry, Repeat, ReqId, ServerMsg, SkipReason, Source,
 };
 
 use super::{Effect, Room};
@@ -208,22 +208,32 @@ impl Room {
         if over { self.finish_item(now_ms) } else { Vec::new() }
     }
 
-    /// The next item, or a pause at the end of the last one.
+    /// The item was played to its end: it is watched, and what comes next depends on the
+    /// repeat mode (the next item, the first after the last, the same again, or a pause at
+    /// the end of the last one).
     fn finish_item(&mut self, now_ms: u64) -> Vec<Effect> {
         let Some(item_id) = self.playback.item_id else { return Vec::new() };
         let duration = self.current_item().and_then(|i| i.duration_ms);
-        let mut effects = match self.item_after(item_id) {
+        let next = match self.repeat {
+            Repeat::Off => self.item_after(item_id),
+            Repeat::All => self.item_after(item_id).or(self.playlist.first().map(|i| i.item_id)),
+            Repeat::One => Some(item_id),
+        };
+        if next.is_none() && self.playback.paused {
+            return Vec::new();
+        }
+        if let Some(item) = self.playlist.iter_mut().find(|i| i.item_id == item_id) {
+            item.watched = true;
+        }
+        let mut effects = match next {
             Some(next) => self.change_item(now_ms, Some(next)),
             None => {
-                if self.playback.paused {
-                    return Vec::new();
-                }
                 let expected = self.playback.expected_position_ms(now_ms);
                 self.rebase(now_ms, duration.map_or(expected, |d| d.min(expected)));
                 self.playback.paused = true;
                 self.playback_changed();
                 self.playback.cause = None;
-                vec![self.broadcast_playback()]
+                vec![self.broadcast_room(), self.broadcast_playback()]
             }
         };
         effects.push(Effect::Persist);

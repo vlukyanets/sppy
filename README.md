@@ -68,6 +68,11 @@ timestamps of MPEG-TS/M2TS files), so this happens
 even if nobody has a player open. For links and other formats the room moves on once every
 participant's player has reached the end.
 
+An item played to its end gets a ✓ (hover over an item to set or clear it by hand). Above
+the playlist, **Repeat all** starts again from the first item after the last one, **Repeat
+one** plays the same item again, and **Shuffle** puts the items after the current one in a
+random order. The marks and the repeat mode survive a server restart.
+
 A link someone else added plays right away if it leads to a well-known video site
 (YouTube, Vimeo, Twitch, Dailymotion, Rutube, VK Video, Bilibili, SoundCloud). For any
 other site the app asks first, since your player would connect to it: **Play** once,

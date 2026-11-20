@@ -1,7 +1,7 @@
 //! Human-readable text for server notices (also shown as OSD).
 
 use sppy_proto::{
-    ControlMode, ItemId, LagPolicy, NoticeAction, ParticipantId, RoomState, SkipReason,
+    ControlMode, ItemId, LagPolicy, NoticeAction, ParticipantId, Repeat, RoomState, SkipReason,
 };
 
 /// `h:mm:ss` or `m:ss`.
@@ -45,6 +45,8 @@ pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
         NoticeAction::PlaylistAdded { .. }
         | NoticeAction::PlaylistRemoved { .. }
         | NoticeAction::PlaylistMoved { .. }
+        | NoticeAction::PlaylistShuffled
+        | NoticeAction::RepeatChanged { .. }
         | NoticeAction::Joined
         | NoticeAction::Left
         | NoticeAction::ControlModeChanged { .. }
@@ -107,6 +109,12 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
         },
         NoticeAction::PlaylistRemoved { .. } => format!("{who} removed an item"),
         NoticeAction::PlaylistMoved { .. } => format!("{who} reordered the playlist"),
+        NoticeAction::PlaylistShuffled => format!("{who} shuffled the playlist"),
+        NoticeAction::RepeatChanged { repeat } => match repeat {
+            Repeat::Off => format!("{who} turned repeat off"),
+            Repeat::All => format!("{who} set the playlist to repeat"),
+            Repeat::One => format!("{who} set the current item to repeat"),
+        },
         NoticeAction::Joined => format!("{who} joined"),
         NoticeAction::Left => format!("{who} left"),
         NoticeAction::Kicked { participant_id } => {
@@ -238,6 +246,26 @@ mod tests {
     }
 
     #[test]
+    fn playlist_mode_notices() {
+        let r = room();
+        let said = |a: NoticeAction| render_notice(Some("bob"), &a, &r);
+        assert_eq!(said(NoticeAction::PlaylistShuffled), "bob shuffled the playlist");
+        assert_eq!(
+            said(NoticeAction::RepeatChanged { repeat: Repeat::All }),
+            "bob set the playlist to repeat"
+        );
+        assert_eq!(
+            said(NoticeAction::RepeatChanged { repeat: Repeat::One }),
+            "bob set the current item to repeat"
+        );
+        assert_eq!(
+            said(NoticeAction::RepeatChanged { repeat: Repeat::Off }),
+            "bob turned repeat off"
+        );
+        assert!(!osd_worthy(&NoticeAction::PlaylistShuffled, false));
+    }
+
+    #[test]
     fn ready_notices_say_who_and_what_to_do() {
         let mut r = room();
         let ready = NoticeAction::ReadyChanged { ready: true };
@@ -293,6 +321,7 @@ mod tests {
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
             ready_check: false,
+            repeat: Default::default(),
             playlist: vec![Item {
                 item_id: ItemId(5),
                 source: Source::Url { url: "u".into() },
@@ -301,6 +330,7 @@ mod tests {
                 fingerprint: None,
                 subtitles: vec![],
                 added_by: ParticipantId(1),
+                watched: false,
             }],
             settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
         }
@@ -407,6 +437,7 @@ mod v2_tests {
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
             ready_check: false,
+            repeat: Default::default(),
             playlist: vec![],
             settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
         }

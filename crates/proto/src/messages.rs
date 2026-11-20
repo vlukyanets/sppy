@@ -5,7 +5,7 @@ use crate::library::{FolderAdding, LibraryNode, MediaFolder};
 use crate::notice::NoticeAction;
 use crate::state::{
     ChatMessage, ControlMode, Delivery, LagPolicy, MediaStatus, PlaybackState, ProgressEntry,
-    RoomState, Source,
+    Repeat, RoomState, Source,
 };
 
 /// How a client authenticates in `Hello`.
@@ -70,6 +70,19 @@ pub enum ClientMsg {
     PlaylistSelect {
         req_id: ReqId,
         item_id: ItemId,
+    },
+    /// Put the items after the current one (all, without one) in a random order.
+    PlaylistShuffle {
+        req_id: ReqId,
+    },
+    SetWatched {
+        req_id: ReqId,
+        item_id: ItemId,
+        watched: bool,
+    },
+    SetRepeat {
+        req_id: ReqId,
+        repeat: Repeat,
     },
     SetStatus {
         item_id: ItemId,
@@ -155,6 +168,9 @@ impl ClientMsg {
             | PlaylistRemove { req_id, .. }
             | PlaylistMove { req_id, .. }
             | PlaylistSelect { req_id, .. }
+            | PlaylistShuffle { req_id }
+            | SetWatched { req_id, .. }
+            | SetRepeat { req_id, .. }
             | SetControlMode { req_id, .. }
             | SetLagPolicy { req_id, .. }
             | SetReadyCheck { req_id, .. }

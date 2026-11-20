@@ -9,6 +9,7 @@ fn item() -> Item {
         fingerprint: Some(Fingerprint { size: 1_000_000, hash: "ab".repeat(32) }),
         subtitles: vec![Subtitle { index: 0, label: Some("en".into()), ext: "srt".into() }],
         added_by: ParticipantId(1),
+        watched: true,
     }
 }
 
@@ -27,6 +28,7 @@ fn room() -> RoomState {
         control_mode: ControlMode::Selected,
         lag_policy: LagPolicy::default(),
         ready_check: true,
+        repeat: Repeat::All,
         playlist: vec![item()],
         settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
     }
@@ -118,6 +120,9 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
         ("SetLagPolicy", ClientMsg::SetLagPolicy { req_id: 11, policy: LagPolicy::FollowSlowest }),
         ("SetReadyCheck", ClientMsg::SetReadyCheck { req_id: 12, on: true }),
         ("SetReady", ClientMsg::SetReady { ready: true }),
+        ("PlaylistShuffle", ClientMsg::PlaylistShuffle { req_id: 13 }),
+        ("SetWatched", ClientMsg::SetWatched { req_id: 14, item_id: ItemId(3), watched: false }),
+        ("SetRepeat", ClientMsg::SetRepeat { req_id: 15, repeat: Repeat::One }),
         (
             "SetCanControl",
             ClientMsg::SetCanControl {
@@ -200,6 +205,20 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
             ServerMsg::Event(Event::Notice {
                 actor: Some(ParticipantId(2)),
                 action: NoticeAction::ReadyChanged { ready: true },
+            }),
+        ),
+        (
+            "EventNoticePlaylistShuffled",
+            ServerMsg::Event(Event::Notice {
+                actor: Some(ParticipantId(1)),
+                action: NoticeAction::PlaylistShuffled,
+            }),
+        ),
+        (
+            "EventNoticeRepeatChanged",
+            ServerMsg::Event(Event::Notice {
+                actor: Some(ParticipantId(1)),
+                action: NoticeAction::RepeatChanged { repeat: Repeat::All },
             }),
         ),
         (

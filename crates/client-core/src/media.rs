@@ -182,6 +182,7 @@ mod tests {
                 .map(|index| Subtitle { index, label: None, ext: "srt".into() })
                 .collect(),
             added_by: ParticipantId(1),
+            watched: false,
         }
     }
 

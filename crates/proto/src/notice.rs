@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ItemId, ParticipantId};
-use crate::state::{ControlMode, Hold, LagPolicy};
+use crate::state::{ControlMode, Hold, LagPolicy, Repeat};
 
 /// Structured notification; clients render the text themselves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,6 +26,10 @@ pub enum NoticeAction {
     },
     PlaylistMoved {
         item_id: ItemId,
+    },
+    PlaylistShuffled,
+    RepeatChanged {
+        repeat: Repeat,
     },
     Joined,
     Left,

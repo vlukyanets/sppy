@@ -1,0 +1,10 @@
+---
+source: crates/proto/tests/golden.rs
+expression: msg
+---
+{
+  "type": "SetWatched",
+  "req_id": 14,
+  "item_id": 3,
+  "watched": false
+}

@@ -310,6 +310,15 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::PlaylistSelect(item_id) => {
                 self.request(|req_id| ClientMsg::PlaylistSelect { req_id, item_id });
             }
+            UiCommand::PlaylistShuffle => {
+                self.request(|req_id| ClientMsg::PlaylistShuffle { req_id });
+            }
+            UiCommand::SetWatched(item_id, watched) => {
+                self.request(|req_id| ClientMsg::SetWatched { req_id, item_id, watched });
+            }
+            UiCommand::SetRepeat(repeat) => {
+                self.request(|req_id| ClientMsg::SetRepeat { req_id, repeat });
+            }
             UiCommand::Chat(text) => self.send(ClientMsg::Chat { text }),
             UiCommand::GetLibrary => self.send(ClientMsg::GetLibrary),
             UiCommand::SetLagPolicy(policy) => {

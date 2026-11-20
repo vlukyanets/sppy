@@ -27,6 +27,7 @@ expression: msg
     "control_mode": "Selected",
     "lag_policy": "CatchUpAlone",
     "ready_check": true,
+    "repeat": "All",
     "playlist": [
       {
         "item_id": 3,
@@ -47,7 +48,8 @@ expression: msg
             "ext": "srt"
           }
         ],
-        "added_by": 1
+        "added_by": 1,
+        "watched": true
       }
     ],
     "settings": {

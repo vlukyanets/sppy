@@ -66,6 +66,8 @@ pub struct RoomState {
     /// A new item starts only once everyone has also pressed Ready (host option).
     #[serde(default)]
     pub ready_check: bool,
+    #[serde(default)]
+    pub repeat: Repeat,
     pub playlist: Vec<Item>,
     pub settings: RoomSettings,
 }
@@ -103,6 +105,18 @@ pub enum LagPolicy {
     FollowSlowest,
 }
 
+/// What comes after an item the room played to its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Repeat {
+    /// The next item; after the last one the room stays paused at its end.
+    #[default]
+    Off,
+    /// The next item; after the last one the first.
+    All,
+    /// The same item again.
+    One,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlMode {
     Everyone,
@@ -121,6 +135,9 @@ pub struct Item {
     pub fingerprint: Option<Fingerprint>,
     pub subtitles: Vec<Subtitle>,
     pub added_by: ParticipantId,
+    /// The room played it to its end (or someone marked it so).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub watched: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

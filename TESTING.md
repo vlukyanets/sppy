@@ -131,6 +131,17 @@ Run each instance with its own home so they do not share config and cache:
    shows A as ready; B presses it → playback starts. **Not ready** takes it back.
    Unticked → the next item starts as soon as both have loaded it.
 
+## Manual: playlist
+
+1. Three short items. Play the first to its end → it gets a ✓ and dims; the second starts.
+   Hover the first → ○ clears the mark, ✓ sets it again; B sees the same.
+2. **Repeat one** → at the end the same item starts again (both players load it anew).
+   **Repeat all** on the last item → at its end the first one starts. **No repeat** → after
+   the last item the room pauses at its end.
+3. **Shuffle** → the items after the current one change order, the same for A and B; the
+   current item keeps playing. Restart the server → the order, the marks and the repeat
+   mode are still there.
+
 ## Manual: VLC
 
 Needs VLC 3 with its window (the automated tests only run it headless).

@@ -37,6 +37,10 @@ pub enum UiCommand {
         after: Option<ItemId>,
     },
     PlaylistSelect(ItemId),
+    /// Put the items after the current one in a random order.
+    PlaylistShuffle,
+    SetWatched(ItemId, bool),
+    SetRepeat(sppy_proto::Repeat),
     Chat(String),
     GetLibrary,
     SetControlMode(ControlMode),
@@ -230,6 +234,7 @@ mod tests {
                 control_mode: mode,
                 lag_policy: sppy_proto::LagPolicy::default(),
                 ready_check: false,
+                repeat: Default::default(),
                 playlist: vec![],
                 settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
             }),

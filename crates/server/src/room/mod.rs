@@ -11,8 +11,8 @@ use std::collections::{HashMap, VecDeque};
 
 use sppy_proto::{
     ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, FileId, Item, LagPolicy,
-    MediaStatus, NoticeAction, Participant, ParticipantId, PlaybackState, ProgressEntry, ReqId,
-    RoomId, RoomSettings, RoomState, ServerMsg, Welcome,
+    MediaStatus, NoticeAction, Participant, ParticipantId, PlaybackState, ProgressEntry, Repeat,
+    ReqId, RoomId, RoomSettings, RoomState, ServerMsg, Welcome,
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
@@ -65,6 +65,7 @@ pub struct Room {
     lag_policy: LagPolicy,
     /// A new item also waits for everyone to press Ready.
     ready_check: bool,
+    repeat: Repeat,
     playlist: Vec<Item>,
     next_item_id: u64,
     catalog: HashMap<FileId, FileInfo>,
@@ -87,6 +88,7 @@ impl Room {
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
             ready_check: false,
+            repeat: Repeat::Off,
             playlist: Vec::new(),
             next_item_id: 1,
             catalog: HashMap::new(),
@@ -117,6 +119,7 @@ impl Room {
             control_mode: self.control_mode,
             lag_policy: self.lag_policy,
             ready_check: self.ready_check,
+            repeat: self.repeat,
             playlist: self.playlist.clone(),
             settings: self.config.settings,
         }
@@ -177,6 +180,11 @@ impl Room {
             ClientMsg::PlaylistSelect { req_id, item_id } => {
                 self.playlist_select(now_ms, pid, req_id, item_id)
             }
+            ClientMsg::PlaylistShuffle { req_id } => self.playlist_shuffle(now_ms, pid, req_id),
+            ClientMsg::SetWatched { req_id, item_id, watched } => {
+                self.set_watched(pid, req_id, item_id, watched)
+            }
+            ClientMsg::SetRepeat { req_id, repeat } => self.set_repeat(pid, req_id, repeat),
             ClientMsg::SetStatus { item_id, status } => {
                 self.set_status(now_ms, pid, item_id, status)
             }
