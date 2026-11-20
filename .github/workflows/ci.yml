@@ -68,3 +68,21 @@ jobs:
       - name: Test
         # All failures at once: a platform-only failure must not hide the next one.
         run: cargo test --workspace --all-features --no-fail-fast
+      # The executables must not need the Visual C++ Redistributable (.cargo/config.toml).
+      - name: Check the Windows executables' DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build -p sppy-app -p sppy-server-cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin not found" }
+          foreach ($exe in "target\debug\sppy.exe", "target\debug\sppy-server.exe") {
+            $deps = & $dumpbin /nologo /dependents $exe
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $deps | Select-String "\.dll"
+            # A list without the system DLLs means the output was not read correctly.
+            if (-not ($deps -match "kernel32")) { throw "no DLL list for $exe" }
+            if ($deps -match "vcruntime|msvcp") { throw "$exe needs the Visual C++ Redistributable" }
+          }

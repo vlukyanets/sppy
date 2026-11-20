@@ -1,0 +1,5 @@
+# The C runtime goes into the Windows executables: VCRUNTIME140.dll is not part of
+# Windows (it comes with the Visual C++ Redistributable), so without this sppy does
+# not start on a clean system. CI checks the imports of the built executables.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
