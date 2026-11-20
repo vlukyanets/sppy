@@ -101,6 +101,9 @@ Run each instance with its own home so they do not share config and cache:
 2. B → **Leave my player alone**, Save. A seeks and pauses → B's player does not follow;
    pausing or seeking in B's player does not affect A. B's drift is not shown in the list.
 3. B → **Speed up or slow down**, Save → B catches up with the room again.
+4. A (host) → **Wait for latecomers**. Freeze B's player for 2 s → A's player jumps back
+   about 2 s with "Went back 2.0 s for B" on its OSD; B does not jump. Back to
+   **Latecomers catch up alone** → the same freeze makes B catch up and A plays on.
 
 ## Manual: VLC
 

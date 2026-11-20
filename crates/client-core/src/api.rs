@@ -40,6 +40,8 @@ pub enum UiCommand {
     Chat(String),
     GetLibrary,
     SetControlMode(ControlMode),
+    /// Host: what the room does about participants who fall behind.
+    SetLagPolicy(sppy_proto::LagPolicy),
     SetCanControl(ParticipantId, bool),
     Kick(ParticipantId),
     RotateInvite,
@@ -221,6 +223,7 @@ mod tests {
                     status: MediaStatus::Loading,
                 }],
                 control_mode: mode,
+                lag_policy: sppy_proto::LagPolicy::default(),
                 playlist: vec![],
                 settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
             }),

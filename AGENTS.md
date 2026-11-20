@@ -62,10 +62,11 @@ A quick Windows check for crates without TLS:
 Ask before changing any of these, and before other choices that are hard to revert
 (new protocol concepts, new heavy dependencies, data formats on disk, publishing):
 
-- Sync policy: no micro-pauses. A participant who lags catches up alone (speed change
-  of a few percent, a seek beyond 1.5 s). The room waits for everyone only on item
-  start and after a stall longer than `stall_hold_secs`. Not Syncplay's
-  "follow the slowest".
+- Sync policy: no micro-pauses. By default a participant who lags catches up alone
+  (speed change of a few percent, a seek beyond 1.5 s; or only jumps, or not at all, as
+  the participant chooses). The room waits for everyone only on item start and after a
+  stall longer than `stall_hold_secs`. Syncplay's "follow the slowest" exists only as a
+  host option (`LagPolicy::FollowSlowest`), never as the default.
 - Playlist and position survive a server restart (`state.json`).
 - Local copies are found by fingerprint, whatever their name or folder.
 - VLC support is the next player after mpv.

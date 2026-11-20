@@ -29,11 +29,17 @@ pub enum Correction {
 const SPEED_EPS: f64 = 0.001;
 /// Consecutive compensating re-seeks allowed after one seek.
 const MAX_RESEEKS: u32 = 2;
+/// How long a latecomer waits for the room to come back before catching up after all.
+const LATECOMER_WAIT_MS: u64 = 3000;
 
 #[derive(Debug, Clone)]
 pub struct DriftController {
     p: SyncParams,
     catch_up: CatchUp,
+    /// The room goes back to a participant this far behind (it waits for latecomers).
+    room_comes_back_ms: Option<u64>,
+    /// Since when this player has been waiting for the room to come back.
+    waiting_since: Option<u64>,
     settle_until: u64,
     correcting: bool,
     seek_issued: bool,
@@ -48,6 +54,8 @@ impl DriftController {
         DriftController {
             p,
             catch_up: CatchUp::Speed,
+            room_comes_back_ms: None,
+            waiting_since: None,
             settle_until: 0,
             correcting: false,
             seek_issued: false,
@@ -66,6 +74,12 @@ impl DriftController {
 
     pub fn set_catch_up(&mut self, catch_up: CatchUp) {
         self.catch_up = catch_up;
+    }
+
+    /// Set when the room waits for latecomers: it goes back to whoever is more than this
+    /// behind, so such a player does not catch up as well (that would overshoot).
+    pub fn set_room_comes_back(&mut self, after_ms: Option<u64>) {
+        self.room_comes_back_ms = after_ms;
     }
 
     pub fn catch_up(&self) -> CatchUp {
@@ -124,6 +138,21 @@ impl DriftController {
                 self.settle_until = now_ms + self.p.settle_ms;
             }
             return out;
+        }
+
+        if let Some(after) = self.room_comes_back_ms
+            && drift < -(after as i64)
+        {
+            let since = *self.waiting_since.get_or_insert(now_ms);
+            if now_ms.saturating_sub(since) < LATECOMER_WAIT_MS {
+                self.correcting = false;
+                if (current_speed - target.room_speed).abs() > SPEED_EPS {
+                    self.set_speed(target.room_speed, &mut out);
+                }
+                return out;
+            }
+        } else {
+            self.waiting_since = None;
         }
 
         if abs > self.p.seek_threshold_ms {

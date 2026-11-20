@@ -31,13 +31,17 @@ fn seeks(p: &Peer) -> usize {
 }
 
 /// b falls about a second behind: its player stalls for a moment while the room plays on.
+async fn fall_behind(b: &Peer) {
+    fall_behind_by(b, 1000).await;
+}
+
 /// First the start settles: right after its own seek, the controller would take the stall
 /// for a slow seek and learn a seek lead from it.
-async fn fall_behind(b: &Peer) {
+async fn fall_behind_by(b: &Peer, ms: u64) {
     let settle = sppy_sync::SyncParams::default().settle_ms;
     tokio::time::sleep(Duration::from_millis(settle + 500)).await;
     b.remote().set_buffering(true);
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    tokio::time::sleep(Duration::from_millis(ms)).await;
     b.remote().set_buffering(false);
 }
 
@@ -122,5 +126,43 @@ async fn a_player_that_cannot_change_speed_jumps() {
     fall_behind(&b).await;
     eventually("b jumped", 5, || seeks(&b) > before).await;
     assert!(speed_changes(&b).is_empty(), "speeds: {:?}", speed_changes(&b));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_host_makes_the_room_wait_for_latecomers() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    let policy = |p: &Peer| snap(&p.handle).room.map(|r| r.lag_policy);
+    assert_eq!(policy(&b), Some(sppy_proto::LagPolicy::CatchUpAlone));
+    a.send(sppy_client_core::api::UiCommand::SetLagPolicy(sppy_proto::LagPolicy::FollowSlowest));
+    eventually("b sees the new policy", 5, || {
+        policy(&b) == Some(sppy_proto::LagPolicy::FollowSlowest)
+    })
+    .await;
+    // Only the host may change it.
+    b.send(sppy_client_core::api::UiCommand::SetLagPolicy(sppy_proto::LagPolicy::CatchUpAlone));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(policy(&a), Some(sppy_proto::LagPolicy::FollowSlowest));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_waiting_room_goes_back_to_the_latecomer() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    a.send(sppy_client_core::api::UiCommand::SetLagPolicy(sppy_proto::LagPolicy::FollowSlowest));
+    add_and_play(&a, &["u1"]).await;
+    eventually("both in sync", 8, || a.synced() && b.synced()).await;
+    let (a_before, b_before) = (seeks(&a), seeks(&b));
+    fall_behind_by(&b, 2_000).await;
+    // a, now 2 s ahead of the room, jumps back; b waits for the room instead of jumping.
+    eventually("a went back", 5, || seeks(&a) > a_before).await;
+    eventually("both in sync again", 5, || a.synced() && b.synced()).await;
+    assert_eq!(seeks(&b), b_before, "b caught up by itself as well");
     server.shutdown().await;
 }

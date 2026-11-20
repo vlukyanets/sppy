@@ -1510,3 +1510,121 @@ mod limits {
         assert!(!chat(&mut r, CHAT_REFILL_MS, g));
     }
 }
+
+/// What the room does about a participant who falls behind.
+mod lag_policy {
+    use super::*;
+
+    /// Host and guest ready; the room plays from 0 at time 0.
+    fn playing_room() -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().is_playing(), "{:?}", r.playback());
+        (r, h, g)
+    }
+
+    fn drift(r: &mut Room, now: u64, pid: ParticipantId, ms: i64) {
+        let msg = ClientMsg::Progress {
+            item_id: ItemId(1),
+            delivery: Delivery::Stream,
+            drift_ms: Some(ms),
+        };
+        r.command(now, pid, msg);
+    }
+
+    fn follow_slowest(r: &mut Room, h: ParticipantId) {
+        r.command(0, h, ClientMsg::SetLagPolicy { req_id: 7, policy: LagPolicy::FollowSlowest });
+    }
+
+    #[test]
+    fn only_the_host_sets_it_and_everyone_hears() {
+        let (mut r, h, g) = playing_room();
+        let msg = |req_id| ClientMsg::SetLagPolicy { req_id, policy: LagPolicy::FollowSlowest };
+        assert_denied(&r.command(0, g, msg(5)), g, 5, ErrorCode::NotHost);
+        assert_eq!(r.state().lag_policy, LagPolicy::CatchUpAlone);
+        let effects = r.command(0, h, msg(6));
+        assert_eq!(r.state().lag_policy, LagPolicy::FollowSlowest);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::Broadcast { msg: ServerMsg::Room(s) } if s.lag_policy == LagPolicy::FollowSlowest
+        )));
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::LagPolicyChanged { policy: LagPolicy::FollowSlowest }));
+        assert!(effects.contains(&Effect::Persist));
+    }
+
+    #[test]
+    fn by_default_the_room_plays_on() {
+        let (mut r, _, g) = playing_room();
+        drift(&mut r, 10_000, g, -5_000);
+        r.tick(10_000);
+        assert_eq!(r.playback().expected_position_ms(10_000), 10_000);
+    }
+
+    #[test]
+    fn the_room_goes_back_to_the_slowest() {
+        let (mut r, h, g) = playing_room();
+        follow_slowest(&mut r, h);
+        drift(&mut r, 10_000, h, -50);
+        drift(&mut r, 10_000, g, -1_500);
+        let effects = r.tick(10_000);
+        assert_eq!(r.playback().expected_position_ms(10_000), 8_500);
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::Broadcast { msg: ServerMsg::Playback(_) }))
+        );
+        assert!(has_notice(&effects, |a| *a
+            == NoticeAction::WentBackFor { participant_id: g, back_ms: 1_500 }));
+        // Measured against the old position: not used twice.
+        r.tick(10_250);
+        assert_eq!(r.playback().expected_position_ms(10_250), 8_750);
+    }
+
+    #[test]
+    fn a_small_lag_is_left_to_the_participant() {
+        let (mut r, h, g) = playing_room();
+        follow_slowest(&mut r, h);
+        drift(&mut r, 10_000, g, -(FOLLOW_SLOWEST_MS as i64) + 1);
+        r.tick(10_000);
+        assert_eq!(r.playback().expected_position_ms(10_000), 10_000);
+    }
+
+    #[test]
+    fn a_buffering_or_absent_participant_does_not_pull_the_room_back() {
+        let (mut r, h, g) = playing_room();
+        follow_slowest(&mut r, h);
+        drift(&mut r, 10_000, g, -5_000);
+        // Long stalls are what the stall hold is for.
+        status(&mut r, 10_000, g, 1, MediaStatus::Stalled);
+        r.tick(10_000);
+        assert_eq!(r.playback().expected_position_ms(10_000), 10_000);
+        status(&mut r, 10_000, g, 1, ready());
+        drift(&mut r, 10_000, g, -5_000);
+        r.disconnected(10_000, g);
+        r.tick(10_000);
+        assert_eq!(r.playback().expected_position_ms(10_000), 10_000);
+    }
+
+    #[test]
+    fn a_paused_room_stays_where_it_is() {
+        let (mut r, h, g) = playing_room();
+        follow_slowest(&mut r, h);
+        drift(&mut r, 10_000, g, -2_000);
+        r.command(10_000, h, ClientMsg::Pause { req_id: 9, position_ms: Some(10_000) });
+        drift(&mut r, 10_000, g, -2_000);
+        r.tick(10_000);
+        assert_eq!(r.playback().position_ms, 10_000);
+    }
+
+    #[test]
+    fn the_policy_survives_a_restart() {
+        let (mut r, h, _) = playing_room();
+        follow_slowest(&mut r, h);
+        let restored = Room::restore(config(), r.persisted(1_000));
+        assert_eq!(restored.state().lag_policy, LagPolicy::FollowSlowest);
+    }
+}

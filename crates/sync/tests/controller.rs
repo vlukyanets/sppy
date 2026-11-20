@@ -292,3 +292,37 @@ fn off_mode_leaves_the_player_alone() {
     assert!(c.update(0, &target(60_000), &paused).is_empty());
     assert!(c.update(5_000, &target(60_000), &obs(1_000, 1.3)).is_empty());
 }
+
+/// The room goes back to whoever is more than a second behind.
+fn waited_for() -> DriftController {
+    let mut c = ctl();
+    c.set_room_comes_back(Some(1_000));
+    c
+}
+
+#[test]
+fn a_latecomer_waits_for_the_room_to_come_back() {
+    // Catching up as well would overshoot once the room has come back.
+    assert!(waited_for().update(0, &target(10_000), &obs(8_000, 1.0)).is_empty());
+}
+
+#[test]
+fn a_small_lag_is_still_closed_by_the_participant() {
+    let out = waited_for().update(0, &target(10_000), &obs(9_500, 1.0));
+    assert!(speed_of(&out).is_some_and(|s| s > 1.0), "{out:?}");
+}
+
+#[test]
+fn being_ahead_is_corrected_as_usual() {
+    let out = waited_for().update(0, &target(10_000), &obs(12_000, 1.0));
+    assert!(out.iter().any(|c| matches!(c, Correction::Seek { .. })), "{out:?}");
+}
+
+#[test]
+fn a_latecomer_stops_waiting_when_the_room_does_not_come() {
+    let mut c = waited_for();
+    assert!(c.update(0, &target(10_000), &obs(8_000, 1.0)).is_empty());
+    assert!(c.update(2_000, &target(12_000), &obs(10_000, 1.0)).is_empty());
+    let out = c.update(3_100, &target(13_100), &obs(11_100, 1.0));
+    assert!(out.iter().any(|c| matches!(c, Correction::Seek { .. })), "{out:?}");
+}

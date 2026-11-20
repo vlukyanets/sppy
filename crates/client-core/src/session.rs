@@ -312,6 +312,9 @@ impl<L: PlayerLauncher> Session<L> {
             }
             UiCommand::Chat(text) => self.send(ClientMsg::Chat { text }),
             UiCommand::GetLibrary => self.send(ClientMsg::GetLibrary),
+            UiCommand::SetLagPolicy(policy) => {
+                self.request(|req_id| ClientMsg::SetLagPolicy { req_id, policy });
+            }
             UiCommand::SetControlMode(mode) => {
                 self.request(|req_id| ClientMsg::SetControlMode { req_id, mode });
             }
@@ -1302,6 +1305,12 @@ impl<L: PlayerLauncher> Session<L> {
         };
         let catch_up = self.catch_up();
         self.controller.set_catch_up(catch_up);
+        let waits = self
+            .snap
+            .room
+            .as_ref()
+            .is_some_and(|r| r.lag_policy == sppy_proto::LagPolicy::FollowSlowest);
+        self.controller.set_room_comes_back(waits.then_some(sppy_proto::FOLLOW_SLOWEST_MS));
         // A player left alone is no measure for the room.
         if catch_up != CatchUp::Off
             && target.playing

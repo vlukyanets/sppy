@@ -1,6 +1,9 @@
 //! Playback commands: play, pause, seek, speed (spec §6.1).
 
-use sppy_proto::{Cause, ErrorCode, NoticeAction, ParticipantId, ReqId, ServerMsg};
+use sppy_proto::{
+    Cause, ErrorCode, FOLLOW_SLOWEST_MS, LagPolicy, MediaStatus, NoticeAction, ParticipantId,
+    ReqId, ServerMsg,
+};
 
 use super::{Effect, Room};
 
@@ -58,6 +61,44 @@ impl Room {
         self.playback_changed();
         self.playback.cause = Some(Cause { participant_id: pid, req_id });
         vec![self.broadcast_playback(), Self::notice(Some(pid), action), Effect::Persist]
+    }
+
+    /// With [`LagPolicy::FollowSlowest`]: go back to the participant furthest behind, if
+    /// they are more than [`FOLLOW_SLOWEST_MS`] behind. Only participants who are ready
+    /// and measured their drift count; buffering ones are the stall hold's business.
+    pub(super) fn follow_slowest(&mut self, now_ms: u64) -> Vec<Effect> {
+        if self.lag_policy != LagPolicy::FollowSlowest
+            || !self.playback.is_playing()
+            || self.playback.item_id.is_none()
+        {
+            return Vec::new();
+        }
+        let slowest = self
+            .progress
+            .values()
+            .filter(|e| Some(e.item_id) == self.playback.item_id)
+            .filter(|e| {
+                self.is_active(e.participant_id)
+                    && self
+                        .member(e.participant_id)
+                        .is_some_and(|m| matches!(m.info.status, MediaStatus::Ready { .. }))
+            })
+            .filter_map(|e| e.drift_ms.map(|d| (e.participant_id, d)))
+            .min_by_key(|&(_, d)| d);
+        let Some((pid, drift)) = slowest else { return Vec::new() };
+        let back_ms = drift.unsigned_abs();
+        if drift >= 0 || back_ms <= FOLLOW_SLOWEST_MS {
+            return Vec::new();
+        }
+        let position = self.playback.expected_position_ms(now_ms).saturating_sub(back_ms);
+        self.rebase(now_ms, position);
+        // Forgets the drifts measured against the old position.
+        self.playback_changed();
+        self.playback.cause = None;
+        vec![
+            self.broadcast_playback(),
+            Self::notice(None, NoticeAction::WentBackFor { participant_id: pid, back_ms }),
+        ]
     }
 
     /// Set `P` at `T = now`, clamped to the current item's known duration.

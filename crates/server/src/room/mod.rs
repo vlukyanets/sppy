@@ -10,9 +10,9 @@ mod status;
 use std::collections::{HashMap, VecDeque};
 
 use sppy_proto::{
-    ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, FileId, Item, MediaStatus,
-    NoticeAction, Participant, ParticipantId, PlaybackState, ProgressEntry, ReqId, RoomId,
-    RoomSettings, RoomState, ServerMsg, Welcome,
+    ChatMessage, ClientMsg, CloseReason, ControlMode, ErrorCode, Event, FileId, Item, LagPolicy,
+    MediaStatus, NoticeAction, Participant, ParticipantId, PlaybackState, ProgressEntry, ReqId,
+    RoomId, RoomSettings, RoomState, ServerMsg, Welcome,
 };
 
 pub use participants::{JoinRequest, JoinRole, Joined};
@@ -62,6 +62,7 @@ pub struct Room {
     members: Vec<Member>,
     next_participant_id: u64,
     control_mode: ControlMode,
+    lag_policy: LagPolicy,
     playlist: Vec<Item>,
     next_item_id: u64,
     catalog: HashMap<FileId, FileInfo>,
@@ -82,6 +83,7 @@ impl Room {
             members: Vec::new(),
             next_participant_id: 1,
             control_mode: ControlMode::Everyone,
+            lag_policy: LagPolicy::default(),
             playlist: Vec::new(),
             next_item_id: 1,
             catalog: HashMap::new(),
@@ -110,6 +112,7 @@ impl Room {
             room_id: RoomId::main(),
             participants: self.members.iter().map(|m| m.info.clone()).collect(),
             control_mode: self.control_mode,
+            lag_policy: self.lag_policy,
             playlist: self.playlist.clone(),
             settings: self.config.settings,
         }
@@ -137,6 +140,7 @@ impl Room {
     pub fn tick(&mut self, now_ms: u64) -> Vec<Effect> {
         let mut effects = self.expire_disconnected(now_ms);
         effects.extend(self.check_stalls(now_ms));
+        effects.extend(self.follow_slowest(now_ms));
         effects.extend(self.flush_progress(now_ms));
         effects.extend(self.check_item_end(now_ms));
         effects
@@ -181,6 +185,7 @@ impl Room {
             ClientMsg::ItemEnded { item_id } => self.item_ended(now_ms, pid, item_id),
             ClientMsg::Chat { text } => self.chat(now_ms, pid, text),
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
+            ClientMsg::SetLagPolicy { req_id, policy } => self.set_lag_policy(pid, req_id, policy),
             ClientMsg::SetCanControl { req_id, participant_id, allowed } => {
                 self.set_can_control(pid, req_id, participant_id, allowed)
             }

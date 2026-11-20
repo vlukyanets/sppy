@@ -24,6 +24,7 @@ fn room() -> RoomState {
             status: MediaStatus::Ready { duration_ms: Some(5_400_000), title: None },
         }],
         control_mode: ControlMode::Selected,
+        lag_policy: LagPolicy::default(),
         playlist: vec![item()],
         settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
     }
@@ -112,6 +113,7 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
         ("Chat", ClientMsg::Chat { text: "hi".into() }),
         ("GetLibrary", ClientMsg::GetLibrary),
         ("SetControlMode", ClientMsg::SetControlMode { req_id: 9, mode: ControlMode::HostOnly }),
+        ("SetLagPolicy", ClientMsg::SetLagPolicy { req_id: 11, policy: LagPolicy::FollowSlowest }),
         (
             "SetCanControl",
             ClientMsg::SetCanControl {
@@ -177,6 +179,23 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
             ServerMsg::Event(Event::Notice {
                 actor: Some(ParticipantId(1)),
                 action: NoticeAction::Seeked { to_ms: 60_000 },
+            }),
+        ),
+        (
+            "EventNoticeWentBackFor",
+            ServerMsg::Event(Event::Notice {
+                actor: None,
+                action: NoticeAction::WentBackFor {
+                    participant_id: ParticipantId(2),
+                    back_ms: 1_500,
+                },
+            }),
+        ),
+        (
+            "EventNoticeLagPolicyChanged",
+            ServerMsg::Event(Event::Notice {
+                actor: Some(ParticipantId(1)),
+                action: NoticeAction::LagPolicyChanged { policy: LagPolicy::FollowSlowest },
             }),
         ),
         ("Denied", ServerMsg::Denied { req_id: 4, code: ErrorCode::NotPermitted }),

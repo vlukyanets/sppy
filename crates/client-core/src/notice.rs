@@ -1,6 +1,8 @@
 //! Human-readable text for server notices (also shown as OSD).
 
-use sppy_proto::{ControlMode, ItemId, NoticeAction, ParticipantId, RoomState, SkipReason};
+use sppy_proto::{
+    ControlMode, ItemId, LagPolicy, NoticeAction, ParticipantId, RoomState, SkipReason,
+};
 
 /// `h:mm:ss` or `m:ss`.
 pub fn fmt_time(ms: u64) -> String {
@@ -37,6 +39,7 @@ pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
         | NoticeAction::HoldStarted { .. }
         | NoticeAction::HoldEnded
         | NoticeAction::ItemSkipped { .. }
+        | NoticeAction::WentBackFor { .. }
         | NoticeAction::Kicked { .. } => true,
         NoticeAction::PlaylistAdded { .. }
         | NoticeAction::PlaylistRemoved { .. }
@@ -44,6 +47,7 @@ pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
         | NoticeAction::Joined
         | NoticeAction::Left
         | NoticeAction::ControlModeChanged { .. }
+        | NoticeAction::LagPolicyChanged { .. }
         | NoticeAction::CanControlChanged { .. }
         | NoticeAction::DeliveryFellBack { .. } => false,
     }
@@ -101,6 +105,15 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
             ControlMode::HostOnly => "Only the host can control playback".into(),
             ControlMode::Selected => "Only selected participants can control playback".into(),
         },
+        NoticeAction::LagPolicyChanged { policy } => match policy {
+            LagPolicy::CatchUpAlone => "Whoever falls behind now catches up alone".into(),
+            LagPolicy::FollowSlowest => "The room now waits for whoever falls behind".into(),
+        },
+        NoticeAction::WentBackFor { participant_id, back_ms } => format!(
+            "Went back {:.1} s for {}",
+            *back_ms as f64 / 1000.0,
+            nickname(room, *participant_id)
+        ),
         NoticeAction::CanControlChanged { participant_id, allowed } => {
             let n = nickname(room, *participant_id);
             if *allowed {
@@ -186,6 +199,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lag_notices_say_what_happened() {
+        let r = room();
+        let went_back =
+            NoticeAction::WentBackFor { participant_id: ParticipantId(2), back_ms: 1_540 };
+        assert_eq!(render_notice(None, &went_back, &r), "Went back 1.5 s for bob");
+        let follow = NoticeAction::LagPolicyChanged { policy: LagPolicy::FollowSlowest };
+        assert_eq!(
+            render_notice(Some("alice"), &follow, &r),
+            "The room now waits for whoever falls behind"
+        );
+        let alone = NoticeAction::LagPolicyChanged { policy: LagPolicy::CatchUpAlone };
+        assert_eq!(
+            render_notice(Some("alice"), &alone, &r),
+            "Whoever falls behind now catches up alone"
+        );
+    }
+
     fn room() -> RoomState {
         let p = |id, nick: &str| Participant {
             id: ParticipantId(id),
@@ -199,6 +230,7 @@ mod tests {
             room_id: RoomId::main(),
             participants: vec![p(1, "alice"), p(2, "bob")],
             control_mode: ControlMode::Everyone,
+            lag_policy: LagPolicy::default(),
             playlist: vec![Item {
                 item_id: ItemId(5),
                 source: Source::Url { url: "u".into() },
@@ -283,6 +315,9 @@ mod v2_tests {
         assert!(!other(NoticeAction::PlaylistAdded { item_ids: vec![] }));
         assert!(!other(NoticeAction::PlaylistMoved { item_id: ItemId(1) }));
         assert!(!other(NoticeAction::ControlModeChanged { mode: ControlMode::Everyone }));
+        assert!(!other(NoticeAction::LagPolicyChanged { policy: LagPolicy::FollowSlowest }));
+        // A jump back everyone sees in their player.
+        assert!(other(NoticeAction::WentBackFor { participant_id: ParticipantId(2), back_ms: 1 }));
         // My own actions are already visible in my player.
         assert!(!osd_worthy(&NoticeAction::Paused, true));
         assert!(!osd_worthy(&NoticeAction::Seeked { to_ms: 1 }, true));
@@ -307,6 +342,7 @@ mod v2_tests {
                 p(3, "ann", MediaStatus::Loading),
             ],
             control_mode: ControlMode::Everyone,
+            lag_policy: LagPolicy::default(),
             playlist: vec![],
             settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
         }

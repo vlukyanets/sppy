@@ -61,6 +61,8 @@ pub struct RoomState {
     pub room_id: RoomId,
     pub participants: Vec<Participant>,
     pub control_mode: ControlMode,
+    #[serde(default)]
+    pub lag_policy: LagPolicy,
     pub playlist: Vec<Item>,
     pub settings: RoomSettings,
 }
@@ -79,6 +81,20 @@ pub struct Participant {
     pub can_control: bool,
     pub connected: bool,
     pub status: MediaStatus,
+}
+
+/// With [`LagPolicy::FollowSlowest`]: the room goes back to a participant this far behind.
+/// Less, the participant closes alone; more, it waits for the room instead of catching up.
+pub const FOLLOW_SLOWEST_MS: u64 = 1000;
+
+/// What the room does about a participant who falls behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LagPolicy {
+    /// The room plays on; the participant catches up by itself.
+    #[default]
+    CatchUpAlone,
+    /// The room goes back to the slowest participant; the others slow down or jump back.
+    FollowSlowest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

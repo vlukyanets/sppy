@@ -163,6 +163,13 @@ alone. ⚙ Settings → *Catching up* picks how your player gets back when it dr
 - **Leave my player alone** — sppy opens the items but does not play, pause or move your
   player, and what you do in it does not reach the room.
 
+The host decides what the room does about latecomers (next to the control mode):
+
+- **Latecomers catch up alone** (default) — the room plays on.
+- **Wait for latecomers** — when someone falls more than a second behind, the room goes back
+  to them and the others slow down or jump back, as in Syncplay. Someone buffering does not
+  pull the room back; after `stall_hold_secs` the room pauses for them as usual.
+
 ## Delivery modes
 
 - **Stream** — the player plays the file from the server over HTTP (Range requests).

@@ -4,8 +4,8 @@ use crate::ids::{ItemId, ParticipantId, ReqId, RoomId};
 use crate::library::{FolderAdding, LibraryNode, MediaFolder};
 use crate::notice::NoticeAction;
 use crate::state::{
-    ChatMessage, ControlMode, Delivery, MediaStatus, PlaybackState, ProgressEntry, RoomState,
-    Source,
+    ChatMessage, ControlMode, Delivery, LagPolicy, MediaStatus, PlaybackState, ProgressEntry,
+    RoomState, Source,
 };
 
 /// How a client authenticates in `Hello`.
@@ -94,6 +94,11 @@ pub enum ClientMsg {
         req_id: ReqId,
         mode: ControlMode,
     },
+    /// Host: what the room does about participants who fall behind.
+    SetLagPolicy {
+        req_id: ReqId,
+        policy: LagPolicy,
+    },
     SetCanControl {
         req_id: ReqId,
         participant_id: ParticipantId,
@@ -142,6 +147,7 @@ impl ClientMsg {
             | PlaylistMove { req_id, .. }
             | PlaylistSelect { req_id, .. }
             | SetControlMode { req_id, .. }
+            | SetLagPolicy { req_id, .. }
             | SetCanControl { req_id, .. }
             | Kick { req_id, .. }
             | RotateInvite { req_id }

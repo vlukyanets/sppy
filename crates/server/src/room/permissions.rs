@@ -1,6 +1,8 @@
 //! Control rights, control modes and host-only administration (spec §4.4).
 
-use sppy_proto::{CloseReason, ControlMode, ErrorCode, NoticeAction, ParticipantId, ReqId};
+use sppy_proto::{
+    CloseReason, ControlMode, ErrorCode, LagPolicy, NoticeAction, ParticipantId, ReqId,
+};
 
 use super::{Effect, Room};
 
@@ -31,6 +33,23 @@ impl Room {
         vec![
             self.broadcast_room(),
             Self::notice(Some(pid), NoticeAction::ControlModeChanged { mode }),
+            Effect::Persist,
+        ]
+    }
+
+    pub(super) fn set_lag_policy(
+        &mut self,
+        pid: ParticipantId,
+        req_id: ReqId,
+        policy: LagPolicy,
+    ) -> Vec<Effect> {
+        if !self.is_host(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotHost);
+        }
+        self.lag_policy = policy;
+        vec![
+            self.broadcast_room(),
+            Self::notice(Some(pid), NoticeAction::LagPolicyChanged { policy }),
             Effect::Persist,
         ]
     }

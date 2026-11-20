@@ -24,6 +24,7 @@ expression: msg
       }
     ],
     "control_mode": "Selected",
+    "lag_policy": "CatchUpAlone",
     "playlist": [
       {
         "item_id": 3,
