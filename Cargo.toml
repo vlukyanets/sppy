@@ -43,6 +43,7 @@ blake3 = "1.8"
 # gui
 eframe = "0.37"
 egui = "0.37"
+egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
 rfd = "0.18"
 
 # environment

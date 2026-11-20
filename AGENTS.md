@@ -87,6 +87,8 @@ Ask before changing any of these, and before other choices that are hard to reve
   a fixed sleep. A flaky test is a bug to investigate, not to retry.
 - Pure logic (ranking, parsing, formatting, state machines) goes into functions that
   can be unit-tested without a UI, network or player.
+- UI parts get `egui_kittest` tests: find widgets by role and label (every input needs
+  an accessible name: `labelled_by`), and a snapshot to look at the result.
 - Keep scope tight: do what was asked, mention other problems found instead of
   silently fixing them in the same commit.
 - Verify before claiming: run the checks, look at real output (logs, files on disk,

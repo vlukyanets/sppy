@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
 use sppy_client_core::config::{
-    CatchUp, MAX_SPEED_CORRECTION_RANGE, MIN_SPEED_CORRECTION_RANGE, MsField,
+    CatchUp, MAX_SPEED_CORRECTION_RANGE, MIN_SPEED_CORRECTION_RANGE, MsField, SyncParams,
 };
 use sppy_client_core::netaddr;
 use sppy_common::folders;
@@ -41,18 +41,20 @@ fn wide_edit(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response
     )
 }
 
-/// A plain text field for a number. The setting changes only while the text is valid;
+/// A form row with a plain text field for a number, named by its label (also for screen
+/// readers; the label keys its draft). The setting changes only while the text is valid;
 /// otherwise the reason is shown next to the field.
 fn number_field<T: Copy>(
     ui: &mut egui::Ui,
+    label: &'static str,
     drafts: &mut HashMap<&'static str, Draft>,
-    key: &'static str,
     value: &mut T,
     show: impl Fn(T) -> String,
     parse: impl Fn(&str) -> Result<T, String>,
     unit: &str,
 ) {
-    let draft = drafts.entry(key).or_insert_with(|| Draft { text: show(*value), error: None });
+    let label_id = ui.label(label).id;
+    let draft = drafts.entry(label).or_insert_with(|| Draft { text: show(*value), error: None });
     ui.horizontal(|ui| {
         let mut edit = egui::TextEdit::singleline(&mut draft.text)
             .margin(egui::Margin::symmetric(8, 4))
@@ -60,7 +62,7 @@ fn number_field<T: Copy>(
         if draft.error.is_some() {
             edit = edit.text_color(super::RED);
         }
-        if ui.add(edit).changed() {
+        if ui.add(edit).labelled_by(label_id).changed() {
             match parse(&draft.text) {
                 Ok(v) => {
                     *value = v;
@@ -80,16 +82,15 @@ fn number_field<T: Copy>(
 
 fn ms_field(
     ui: &mut egui::Ui,
+    label: &'static str,
     drafts: &mut HashMap<&'static str, Draft>,
-    key: &'static str,
     value: &mut u64,
-    min: u64,
-    max: Option<u64>,
+    (min, max): (u64, Option<u64>),
 ) {
     number_field(
         ui,
+        label,
         drafts,
-        key,
         value,
         |v| v.to_string(),
         |t| numbers::whole(t, "ms", min, max),
@@ -99,20 +100,50 @@ fn ms_field(
 
 fn percent_field(
     ui: &mut egui::Ui,
+    label: &'static str,
     drafts: &mut HashMap<&'static str, Draft>,
-    key: &'static str,
     value: &mut f64,
     range: (f64, f64),
 ) {
     number_field(
         ui,
+        label,
         drafts,
-        key,
         value,
         numbers::percent_text,
         |t| numbers::percent(t, range),
         "%",
     );
+}
+
+/// One text field per sync threshold.
+fn advanced_sync(ui: &mut egui::Ui, drafts: &mut HashMap<&'static str, Draft>, a: &mut SyncParams) {
+    form(ui, "sync", |ui| {
+        for f in MsField::ALL {
+            ms_field(ui, f.label(), drafts, f.get_mut(a), f.limits());
+            ui.end_row();
+        }
+        let (min, max) = (MIN_SPEED_CORRECTION_RANGE, MAX_SPEED_CORRECTION_RANGE);
+        percent_field(ui, "Min speed correction", drafts, &mut a.min_speed_correction, min);
+        ui.end_row();
+        percent_field(ui, "Max speed correction", drafts, &mut a.max_speed_correction, max);
+        ui.end_row();
+    });
+    theme::muted(
+        ui,
+        "Jump threshold is used when catching up by jumps; the dead band and the speed \
+         settings when catching up by speed.",
+    );
+}
+
+/// Why Save is off: a field with text that is no valid value, or thresholds that break
+/// their rules.
+fn save_blocker(drafts: &HashMap<&'static str, Draft>, advanced: &SyncParams) -> Option<String> {
+    if drafts.values().any(|d| d.error.is_some()) {
+        return Some("Fix the values in red to save.".into());
+    }
+    let problem = advanced.problems().into_iter().next()?;
+    Some(format!("Advanced sync settings: {}", problem.message))
 }
 
 fn catch_up_text(m: CatchUp) -> &'static str {
@@ -368,11 +399,10 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             theme::card(ui, "Downloads", None, |ui| {
                 ui.checkbox(&mut c.prefetch_next, "Download the next playlist item in advance");
                 form(ui, "downloads", |ui| {
-                    ui.label("Cache limit");
                     number_field(
                         ui,
+                        "Cache limit",
                         &mut app.ui.number_drafts,
-                        "cache_limit_gb",
                         &mut c.cache_limit_gb,
                         |v| v.to_string(),
                         |t| numbers::whole(t, "GB", 1, None),
@@ -414,12 +444,11 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                         );
                     h.listen.set_ip(ip);
                     ui.end_row();
-                    ui.label("Port");
                     let mut port = h.listen.port();
                     number_field(
                         ui,
+                        "Port",
                         &mut app.ui.number_drafts,
-                        "port",
                         &mut port,
                         |v| v.to_string(),
                         |t| numbers::whole(t, "", 1, Some(65_535)).map(|p| p as u16),
@@ -441,53 +470,18 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                     ui.colored_label(super::YELLOW, p);
                 }
                 ui.collapsing("Advanced sync settings", |ui| {
-                    let a = &mut c.advanced;
-                    let drafts = &mut app.ui.number_drafts;
-                    form(ui, "sync", |ui| {
-                        for f in MsField::ALL {
-                            ui.label(f.label());
-                            let (min, max) = f.limits();
-                            ms_field(ui, drafts, f.key(), f.get_mut(a), min, max);
-                            ui.end_row();
-                        }
-                        ui.label("Min speed correction");
-                        percent_field(
-                            ui,
-                            drafts,
-                            "min_speed",
-                            &mut a.min_speed_correction,
-                            MIN_SPEED_CORRECTION_RANGE,
-                        );
-                        ui.end_row();
-                        ui.label("Max speed correction");
-                        percent_field(
-                            ui,
-                            drafts,
-                            "max_speed",
-                            &mut a.max_speed_correction,
-                            MAX_SPEED_CORRECTION_RANGE,
-                        );
-                        ui.end_row();
-                    });
-                    theme::muted(
-                        ui,
-                        "Jump threshold is used when catching up by jumps; the dead band and \
-                         the speed settings when catching up by speed.",
-                    );
+                    advanced_sync(ui, &mut app.ui.number_drafts, &mut c.advanced);
                 });
             });
 
             ui.add_space(4.0);
-            let typo = app.ui.number_drafts.values().any(|d| d.error.is_some());
-            let conflict = app.config.advanced.problems().into_iter().next().map(|p| p.message);
+            let blocker = save_blocker(&app.ui.number_drafts, &app.config.advanced);
             ui.horizontal(|ui| {
-                if ui.add_enabled(!typo && conflict.is_none(), theme::primary("Save")).clicked() {
+                if ui.add_enabled(blocker.is_none(), theme::primary("Save")).clicked() {
                     save = true;
                 }
-                if typo {
-                    ui.colored_label(super::RED, "Fix the values in red to save.");
-                } else if let Some(conflict) = conflict {
-                    ui.colored_label(super::RED, format!("Advanced sync settings: {conflict}"));
+                if let Some(blocker) = blocker {
+                    ui.colored_label(super::RED, blocker);
                 } else {
                     theme::muted(
                         ui,
@@ -611,7 +605,95 @@ fn server_folder_list(
 
 #[cfg(test)]
 mod tests {
-    use super::language_list;
+    use super::*;
+    use egui::accesskit::Role;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    struct Sync {
+        drafts: HashMap<&'static str, Draft>,
+        params: SyncParams,
+    }
+
+    fn advanced() -> Harness<'static, Sync> {
+        let state = Sync { drafts: HashMap::new(), params: SyncParams::default() };
+        let mut h = Harness::builder().with_size([520.0, 480.0]).build_ui_state(
+            |ui, s: &mut Sync| {
+                theme::apply(ui.ctx());
+                theme::card(ui, "Sync", None, |ui| advanced_sync(ui, &mut s.drafts, &mut s.params));
+            },
+            state,
+        );
+        h.run();
+        h
+    }
+
+    fn field<'h>(h: &'h Harness<'static, Sync>, label: &'h str) -> egui_kittest::Node<'h> {
+        h.get_by_role_and_label(Role::TextInput, label)
+    }
+
+    #[test]
+    fn thresholds_are_text_fields_not_drag_values() {
+        let h = advanced();
+        assert_eq!(h.query_all_by_role(Role::SpinButton).count(), 0, "no drag values");
+        assert_eq!(h.query_all_by_role(Role::TextInput).count(), MsField::ALL.len() + 2);
+        for f in MsField::ALL {
+            let value = f.get(&SyncParams::default()).to_string();
+            assert_eq!(field(&h, f.label()).value().as_deref(), Some(value.as_str()));
+        }
+        assert_eq!(field(&h, "Max speed correction").value().as_deref(), Some("8"));
+    }
+
+    #[test]
+    fn a_typo_keeps_the_value_and_blocks_save() {
+        let mut h = advanced();
+        let dead_band = field(&h, "Dead band");
+        dead_band.focus();
+        dead_band.type_text("x");
+        h.run();
+        assert_eq!(h.state().params.dead_band_ms, 100, "the setting keeps its value");
+        h.get_by_label("Enter a whole number");
+        assert_eq!(
+            save_blocker(&h.state().drafts, &h.state().params).as_deref(),
+            Some("Fix the values in red to save.")
+        );
+    }
+
+    #[test]
+    fn a_valid_value_is_taken_and_a_conflict_named() {
+        let mut h = advanced();
+        let exit = field(&h, "Speed correction exit");
+        exit.focus();
+        exit.type_text("0");
+        h.run();
+        assert_eq!(h.state().params.speed_exit_ms, 300);
+        assert_eq!(
+            save_blocker(&h.state().drafts, &h.state().params).as_deref(),
+            Some("Advanced sync settings: Speed correction exit must be below the dead band.")
+        );
+    }
+
+    #[test]
+    fn a_value_over_its_limit_names_the_limit() {
+        let mut h = advanced();
+        let settle = field(&h, "Settle time");
+        settle.focus();
+        settle.type_text("00");
+        h.run();
+        h.get_by_label("From 0 to 10000");
+        assert_eq!(h.state().params.settle_ms, 1000);
+    }
+
+    #[test]
+    fn advanced_sync_looks_right() {
+        let mut h = advanced();
+        let dead_band = field(&h, "Dead band");
+        dead_band.focus();
+        dead_band.type_text("x");
+        h.run();
+        h.fit_contents();
+        h.snapshot("advanced_sync_with_a_typo");
+    }
 
     #[test]
     fn languages_split_on_commas_and_spaces() {

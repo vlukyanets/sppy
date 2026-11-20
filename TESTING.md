@@ -14,6 +14,17 @@ their link tests when `yt-dlp` is not (they serve a clip from 127.0.0.1, no inte
 run VLC headless with its data and config in a temporary folder, so your own VLC settings
 and Lua folder are not touched.
 
+UI tests (`egui_kittest`, in `bins/app`) click and type through the accessibility tree and
+compare screenshots with `bins/app/tests/snapshots/*.png`. They render with wgpu; without
+a GPU that needs a software renderer (CI installs lavapipe, `mesa-vulkan-drivers`). After
+a deliberate change of the look, look at the new image and update the stored one:
+
+```sh
+UPDATE_SNAPSHOTS=1 cargo test -p sppy-app
+```
+
+A failed comparison leaves `*.new.png` and `*.diff.png` next to the stored image.
+
 Sync quality with real players is measured by hand (it depends on the machine's load, so
 CI does not run it): two clients with headless mpv must stay within the dead band (100 ms)
 of the room.
