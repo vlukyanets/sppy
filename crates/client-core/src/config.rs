@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sppy_common::config::ServerConfig;
 use sppy_player::any::{PlayerKind, PlayerSetup};
-pub use sppy_sync::{CatchUp, SyncParams};
+pub use sppy_sync::{
+    CatchUp, MAX_SPEED_CORRECTION_RANGE, MIN_SPEED_CORRECTION_RANGE, MsField, Problem, SyncParams,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -180,13 +182,26 @@ impl ClientConfig {
 
     /// Load the config; a missing file gives the defaults.
     pub fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
-        match std::fs::read_to_string(path) {
+        Self::load_checked(path).map(|(config, _)| config)
+    }
+
+    /// Load the config, with sync thresholds that are out of their limits or contradict
+    /// each other set back to their defaults; the problems found are returned (and
+    /// logged) so the user can be told.
+    pub fn load_checked(path: &Path) -> Result<(Self, Vec<Problem>), ConfigError> {
+        let mut config = match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str::<Self>(&text)
                 .map(Self::migrated)
-                .map_err(|source| ConfigError::Parse { path: path.to_owned(), source }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(source) => Err(ConfigError::Io { path: path.to_owned(), source }),
+                .map_err(|source| ConfigError::Parse { path: path.to_owned(), source })?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(source) => return Err(ConfigError::Io { path: path.to_owned(), source }),
+        };
+        let (advanced, problems) = config.advanced.sanitized();
+        for p in &problems {
+            tracing::warn!("{}: {} The default is used.", path.display(), p.message);
         }
+        config.advanced = advanced;
+        Ok((config, problems))
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
@@ -398,6 +413,34 @@ mod tests {
         let path = dir.path().join("client.toml");
         std::fs::write(&path, "cache_limit_gb = \"lots\"").unwrap();
         assert!(ClientConfig::load_or_default(&path).is_err());
+    }
+
+    #[test]
+    fn bad_sync_thresholds_fall_back_to_the_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.toml");
+        std::fs::write(
+            &path,
+            "nickname = \"bob\"\n[advanced]\nsettle_ms = 600000\nhorizon_ms = 20000\n\
+             speed_exit_ms = 500\n",
+        )
+        .unwrap();
+        let (c, problems) = ClientConfig::load_checked(&path).unwrap();
+        assert_eq!(c.nickname, "bob");
+        assert_eq!(
+            c.advanced,
+            SyncParams { horizon_ms: 20_000, ..SyncParams::default() },
+            "only the bad values are replaced"
+        );
+        let messages: Vec<&str> = problems.iter().map(|p| p.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "Settle time must be at most 10000 ms.",
+                "Speed correction exit must be below the dead band."
+            ]
+        );
+        assert_eq!(ClientConfig::load_or_default(&path).unwrap(), c);
     }
 
     #[test]

@@ -1,7 +1,5 @@
-//! Numbers typed into plain text fields of the settings: parsing, limits and the rules
-//! that tie the sync thresholds together.
-
-use sppy_client_core::config::SyncParams;
+//! Numbers typed into plain text fields of the settings. The limits of the sync
+//! thresholds and the rules between them live in `sppy_sync::SyncParams`.
 
 /// What is typed into one number field while the settings are open.
 pub struct Draft {
@@ -30,52 +28,24 @@ pub fn whole(text: &str, unit: &str, min: u64, max: Option<u64>) -> Result<u64, 
     }
 }
 
-/// Percent from `min` to `max` (a dot or a comma for fractions) as a fraction: `8` → 0.08.
-pub fn percent(text: &str, min: f64, max: f64) -> Result<f64, String> {
+/// Percent (a dot or a comma for fractions) as a fraction from `min` to `max`:
+/// `8` → 0.08.
+pub fn percent(text: &str, (min, max): (f64, f64)) -> Result<f64, String> {
     let text = strip_unit(text, "%").replace(',', ".");
     if text.is_empty() {
         return Err("Enter a number".into());
     }
     let v: f64 = text.parse().map_err(|_| "Enter a number".to_owned())?;
+    let v = v / 100.0;
     if !v.is_finite() || !(min..=max).contains(&v) {
-        return Err(format!("From {min} to {max}"));
+        return Err(format!("From {} to {}", percent_text(min), percent_text(max)));
     }
-    Ok(v / 100.0)
+    Ok(v)
 }
 
 /// A fraction as the percent shown in a field: 0.08 → `8`, 0.025 → `2.5`.
 pub fn percent_text(fraction: f64) -> String {
     format!("{}", (fraction * 1000.0).round() / 10.0)
-}
-
-/// Beyond these, sync silently stops working: no corrections for that long after every
-/// seek or pause, drifts of minutes closed only by speed, or every seek overshooting.
-pub const MAX_SETTLE_MS: u64 = 10_000;
-pub const MAX_SEEK_THRESHOLD_MS: u64 = 30_000;
-pub const MAX_SEEK_LEAD_MS: u64 = 10_000;
-
-/// What is wrong with the thresholds, also when they came from `client.toml`.
-pub fn sync_problems(p: &SyncParams) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    if p.settle_ms > MAX_SETTLE_MS {
-        out.push("Settle time must be at most 10000 ms.");
-    }
-    if p.seek_threshold_ms > MAX_SEEK_THRESHOLD_MS {
-        out.push("Seek threshold must be at most 30000 ms.");
-    }
-    if p.max_seek_lead_ms > MAX_SEEK_LEAD_MS {
-        out.push("Max seek lead must be at most 10000 ms.");
-    }
-    if p.speed_exit_ms >= p.dead_band_ms {
-        out.push("Speed correction exit must be below the dead band.");
-    }
-    if p.seek_threshold_ms <= p.dead_band_ms {
-        out.push("Seek threshold must be above the dead band.");
-    }
-    if p.min_speed_correction > p.max_speed_correction {
-        out.push("Min speed correction must not be above the max.");
-    }
-    out
 }
 
 #[cfg(test)]
@@ -99,59 +69,14 @@ mod tests {
 
     #[test]
     fn percents_become_fractions() {
-        assert_eq!(percent("8", 1.0, 50.0), Ok(0.08));
-        assert_eq!(percent("2,5 %", 0.0, 20.0), Ok(0.025));
-        assert_eq!(percent("2.5%", 0.0, 20.0), Ok(0.025));
-        assert_eq!(percent("0.08", 1.0, 50.0), Err("From 1 to 50".into()));
-        assert_eq!(percent("NaN", 0.0, 20.0), Err("From 0 to 20".into()));
-        assert_eq!(percent("fast", 0.0, 20.0), Err("Enter a number".into()));
+        assert_eq!(percent("8", (0.01, 0.5)), Ok(0.08));
+        assert_eq!(percent("2,5 %", (0.0, 0.2)), Ok(0.025));
+        assert_eq!(percent("2.5%", (0.0, 0.2)), Ok(0.025));
+        assert_eq!(percent("0.08", (0.01, 0.5)), Err("From 1 to 50".into()));
+        assert_eq!(percent("NaN", (0.0, 0.2)), Err("From 0 to 20".into()));
+        assert_eq!(percent("fast", (0.0, 0.2)), Err("Enter a number".into()));
         assert_eq!(percent_text(0.08), "8");
         assert_eq!(percent_text(0.025), "2.5");
         assert_eq!(percent_text(0.0), "0");
-    }
-
-    #[test]
-    fn defaults_are_consistent_and_conflicts_are_named() {
-        assert!(sync_problems(&SyncParams::default()).is_empty());
-        let p = SyncParams {
-            dead_band_ms: 2000,
-            min_speed_correction: 0.1,
-            max_speed_correction: 0.05,
-            ..SyncParams::default()
-        };
-        assert_eq!(
-            sync_problems(&p),
-            [
-                "Seek threshold must be above the dead band.",
-                "Min speed correction must not be above the max."
-            ]
-        );
-        let p = SyncParams { speed_exit_ms: 100, ..SyncParams::default() };
-        assert_eq!(sync_problems(&p), ["Speed correction exit must be below the dead band."]);
-    }
-
-    #[test]
-    fn caps_that_keep_sync_working() {
-        let at_caps = SyncParams {
-            settle_ms: MAX_SETTLE_MS,
-            seek_threshold_ms: MAX_SEEK_THRESHOLD_MS,
-            max_seek_lead_ms: MAX_SEEK_LEAD_MS,
-            ..SyncParams::default()
-        };
-        assert!(sync_problems(&at_caps).is_empty());
-        let over = SyncParams {
-            settle_ms: MAX_SETTLE_MS + 1,
-            seek_threshold_ms: MAX_SEEK_THRESHOLD_MS + 1,
-            max_seek_lead_ms: MAX_SEEK_LEAD_MS + 1,
-            ..SyncParams::default()
-        };
-        assert_eq!(
-            sync_problems(&over),
-            [
-                "Settle time must be at most 10000 ms.",
-                "Seek threshold must be at most 30000 ms.",
-                "Max seek lead must be at most 10000 ms."
-            ]
-        );
     }
 }

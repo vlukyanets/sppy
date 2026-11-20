@@ -27,11 +27,11 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let _log_guard = logging::init(&paths.logs_dir);
-    let config = match ClientConfig::load_or_default(&paths.config_file) {
-        Ok(c) => c,
+    let (config, config_problems) = match ClientConfig::load_checked(&paths.config_file) {
+        Ok(loaded) => loaded,
         Err(e) => {
             tracing::error!("{e}; using defaults");
-            ClientConfig::default()
+            (ClientConfig::default(), Vec::new())
         }
     };
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -54,7 +54,9 @@ fn main() -> anyhow::Result<()> {
         "sppy",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::SppyApp::new(cc, rt, handle, launcher, config, paths, link)))
+            let mut app = app::SppyApp::new(cc, rt, handle, launcher, config, paths, link);
+            app.config_problems_found(config_problems);
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

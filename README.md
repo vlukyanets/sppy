@@ -158,10 +158,15 @@ alone. ⚙ Settings → *Catching up* picks how your player gets back when it dr
 
 - **Speed up or slow down** (default) — a few percent faster or slower until it is back
   (the pitch stays); a jump only when it is more than 1.5 s off.
-- **Jump** — no change of tempo; the player jumps to the room once it is half a second off.
-  Players that cannot change speed always do this.
+- **Jump** — no change of tempo; the player jumps to the room once it is half a second off
+  (*Jump threshold* in the advanced sync settings). Players that cannot change speed
+  always do this.
 - **Leave my player alone** — sppy opens the items but does not play, pause or move your
   player, and what you do in it does not reach the room.
+
+The thresholds are under *Advanced sync settings*. Values in `client.toml` that are out of
+their limits or contradict each other are set back to their defaults on start, and the app
+says which.
 
 The host decides what the room does about latecomers (next to the control mode):
 

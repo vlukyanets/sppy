@@ -66,6 +66,8 @@ pub struct UiState {
     pub link_handler_error: Option<String>,
     /// What is typed into the number fields of the settings, while they are open.
     pub number_drafts: std::collections::HashMap<&'static str, crate::ui::numbers::Draft>,
+    /// Sync thresholds in client.toml that were set back to their defaults on start.
+    pub config_problems: Vec<String>,
 }
 
 pub struct SppyApp {
@@ -150,6 +152,7 @@ impl SppyApp {
             link_handler: None,
             link_handler_error: None,
             number_drafts: Default::default(),
+            config_problems: Vec::new(),
         };
         let events = handle.subscribe_events();
         SppyApp {
@@ -208,8 +211,19 @@ impl SppyApp {
     }
 
     pub fn save_config(&mut self) {
-        if let Err(e) = self.config.save(&self.paths.config_file) {
-            self.push_log(LogKind::Error, e.to_string());
+        match self.config.save(&self.paths.config_file) {
+            // The file no longer has the values that were set back.
+            Ok(()) => self.ui.config_problems.clear(),
+            Err(e) => self.push_log(LogKind::Error, e.to_string()),
+        }
+    }
+
+    /// Tell about sync thresholds in client.toml that were set back to their defaults.
+    pub fn config_problems_found(&mut self, problems: Vec<sppy_client_core::config::Problem>) {
+        for p in problems {
+            let text = format!("client.toml: {} The default is used.", p.message);
+            self.push_log(LogKind::Notice, text.clone());
+            self.ui.config_problems.push(text);
         }
     }
 

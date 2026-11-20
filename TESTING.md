@@ -95,8 +95,12 @@ Run each instance with its own home so they do not share config and cache:
     over them changes nothing. `abc` or `5` in *Dead band* → red with the reason, Save is
     off. *Speed correction exit* `200` with the dead band at `100` → Save is off and names
     the conflict. *Settle time* `20000` → "From 0 to 10000"; *Dead band* `3000` with a
-    *Seek threshold* of `20000` is accepted. Close Settings and open again → the fields
+    *Seek threshold* and *Jump threshold* of `20000` is accepted, with the jump threshold
+    left at `500` Save names that conflict. Close Settings and open again → the fields
     show the saved values.
+20. Quit, put `settle_ms = 600000` under `[advanced]` in client.toml, start again → the
+    event log and Settings → Sync say the settle time was set back to the default; the
+    Advanced field shows `1000`. Save → the note is gone and the file no longer has it.
 
 ## Manual: catching up
 

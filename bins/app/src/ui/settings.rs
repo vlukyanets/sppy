@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
-use sppy_client_core::config::CatchUp;
+use sppy_client_core::config::{
+    CatchUp, MAX_SPEED_CORRECTION_RANGE, MIN_SPEED_CORRECTION_RANGE, MsField,
+};
 use sppy_client_core::netaddr;
 use sppy_common::folders;
 use sppy_player::any::PlayerKind;
@@ -100,8 +102,7 @@ fn percent_field(
     drafts: &mut HashMap<&'static str, Draft>,
     key: &'static str,
     value: &mut f64,
-    min: f64,
-    max: f64,
+    range: (f64, f64),
 ) {
     number_field(
         ui,
@@ -109,7 +110,7 @@ fn percent_field(
         key,
         value,
         numbers::percent_text,
-        |t| numbers::percent(t, min, max),
+        |t| numbers::percent(t, range),
         "%",
     );
 }
@@ -436,58 +437,17 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             });
 
             theme::card(ui, "Sync", None, |ui| {
+                for p in &app.ui.config_problems {
+                    ui.colored_label(super::YELLOW, p);
+                }
                 ui.collapsing("Advanced sync settings", |ui| {
                     let a = &mut c.advanced;
                     let drafts = &mut app.ui.number_drafts;
                     form(ui, "sync", |ui| {
-                        let rows: [(&str, &'static str, &mut u64, u64, Option<u64>); 7] = [
-                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10, None),
-                            (
-                                "Speed correction exit",
-                                "speed_exit_ms",
-                                &mut a.speed_exit_ms,
-                                0,
-                                None,
-                            ),
-                            (
-                                "Speed correction horizon",
-                                "horizon_ms",
-                                &mut a.horizon_ms,
-                                1_000,
-                                None,
-                            ),
-                            (
-                                "Seek threshold",
-                                "seek_threshold_ms",
-                                &mut a.seek_threshold_ms,
-                                100,
-                                Some(numbers::MAX_SEEK_THRESHOLD_MS),
-                            ),
-                            (
-                                "Settle time",
-                                "settle_ms",
-                                &mut a.settle_ms,
-                                0,
-                                Some(numbers::MAX_SETTLE_MS),
-                            ),
-                            (
-                                "Max seek lead",
-                                "max_seek_lead_ms",
-                                &mut a.max_seek_lead_ms,
-                                0,
-                                Some(numbers::MAX_SEEK_LEAD_MS),
-                            ),
-                            (
-                                "Re-seek threshold",
-                                "reseek_threshold_ms",
-                                &mut a.reseek_threshold_ms,
-                                50,
-                                None,
-                            ),
-                        ];
-                        for (label, key, value, min, max) in rows {
-                            ui.label(label);
-                            ms_field(ui, drafts, key, value, min, max);
+                        for f in MsField::ALL {
+                            ui.label(f.label());
+                            let (min, max) = f.limits();
+                            ms_field(ui, drafts, f.key(), f.get_mut(a), min, max);
                             ui.end_row();
                         }
                         ui.label("Min speed correction");
@@ -496,8 +456,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                             drafts,
                             "min_speed",
                             &mut a.min_speed_correction,
-                            0.0,
-                            20.0,
+                            MIN_SPEED_CORRECTION_RANGE,
                         );
                         ui.end_row();
                         ui.label("Max speed correction");
@@ -506,17 +465,21 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                             drafts,
                             "max_speed",
                             &mut a.max_speed_correction,
-                            1.0,
-                            50.0,
+                            MAX_SPEED_CORRECTION_RANGE,
                         );
                         ui.end_row();
                     });
+                    theme::muted(
+                        ui,
+                        "Jump threshold is used when catching up by jumps; the dead band and \
+                         the speed settings when catching up by speed.",
+                    );
                 });
             });
 
             ui.add_space(4.0);
             let typo = app.ui.number_drafts.values().any(|d| d.error.is_some());
-            let conflict = numbers::sync_problems(&app.config.advanced).first().copied();
+            let conflict = app.config.advanced.problems().into_iter().next().map(|p| p.message);
             ui.horizontal(|ui| {
                 if ui.add_enabled(!typo && conflict.is_none(), theme::primary("Save")).clicked() {
                     save = true;

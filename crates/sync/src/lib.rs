@@ -8,4 +8,6 @@ mod params;
 pub use clock::ClockEstimator;
 pub use controller::{Correction, DriftController, Observed, Target};
 pub use echo::{Classified, EchoFilter, PendingOp, RawEvent, UserAction};
-pub use params::{CatchUp, SyncParams};
+pub use params::{
+    CatchUp, MAX_SPEED_CORRECTION_RANGE, MIN_SPEED_CORRECTION_RANGE, MsField, Problem, SyncParams,
+};
