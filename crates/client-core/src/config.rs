@@ -370,7 +370,7 @@ mod tests {
             ..ClientConfig::default()
         };
         c.servers.push(SavedServer { address: "sppy://h:1/t".into() });
-        c.advanced.dead_band_ms = 100;
+        c.advanced.dead_band_ms = 120;
         c.host.media.push(sppy_common::config::MediaRoot { name: "M".into(), path: "/m".into() });
         c.save(&path).unwrap();
         assert_eq!(ClientConfig::load_or_default(&path).unwrap(), c);
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(c.nickname, "bob");
         assert_eq!(c.mode, DeliveryMode::Preload);
         assert_eq!(c.advanced.seek_threshold_ms, 2000);
-        assert_eq!(c.advanced.dead_band_ms, 80);
+        assert_eq!(c.advanced.dead_band_ms, 100);
         assert_eq!(c.cache_limit_gb, 20);
     }
 

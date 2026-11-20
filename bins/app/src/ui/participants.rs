@@ -18,10 +18,11 @@ pub fn status_text(s: &MediaStatus) -> (&'static str, egui::Color32, Option<&str
     }
 }
 
-/// `±20 ms`, colored by how far the participant is from the room.
-pub fn sync_text(drift_ms: i64) -> (String, egui::Color32) {
+/// `±20 ms`, colored by how far the participant is from the room: green inside the dead
+/// band, where sppy corrects nothing.
+pub fn sync_text(drift_ms: i64, dead_band_ms: u64) -> (String, egui::Color32) {
     let abs = drift_ms.unsigned_abs();
-    let color = if abs < 80 {
+    let color = if abs <= dead_band_ms {
         GREEN
     } else if abs < 500 {
         YELLOW
@@ -112,7 +113,7 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                         None => {}
                     }
                     if playing && let Some(d) = entry.and_then(|e| e.drift_ms) {
-                        let (text, color) = sync_text(d);
+                        let (text, color) = sync_text(d, app.config.advanced.dead_band_ms);
                         ui.label(egui::RichText::new(text).small().monospace().color(color))
                             .on_hover_text("Distance from the room position");
                     }
@@ -154,8 +155,10 @@ mod tests {
 
     #[test]
     fn sync_indicator_colors_and_format() {
-        assert_eq!(sync_text(-20), ("-20 ms".into(), GREEN));
-        assert_eq!(sync_text(120), ("+120 ms".into(), YELLOW));
-        assert_eq!(sync_text(-2_500), ("-2.5 s".into(), RED));
+        assert_eq!(sync_text(-20, 100), ("-20 ms".into(), GREEN));
+        // Inside the dead band nothing gets corrected, so it counts as in sync.
+        assert_eq!(sync_text(-90, 100), ("-90 ms".into(), GREEN));
+        assert_eq!(sync_text(120, 100), ("+120 ms".into(), YELLOW));
+        assert_eq!(sync_text(-2_500, 100), ("-2.5 s".into(), RED));
     }
 }

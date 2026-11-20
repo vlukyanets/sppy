@@ -53,6 +53,11 @@ impl Model {
 }
 
 /// Returns (max |drift| over the last 60 s, number of seeks).
+/// Inside the dead band nothing is corrected, so that is where a player settles.
+fn dead_band() -> f64 {
+    SyncParams::default().dead_band_ms as f64
+}
+
 fn run(initial_drift_ms: f64) -> (f64, usize) {
     let mut ctl = DriftController::new(SyncParams::default());
     let mut rng = Lcg(42);
@@ -98,7 +103,7 @@ fn run(initial_drift_ms: f64) -> (f64, usize) {
 fn converges_without_oscillation() {
     let (worst, seeks) = run(900.0);
     eprintln!("900: worst={worst:.1} seeks={seeks}");
-    assert!(worst < 80.0, "worst drift in the last 60 s: {worst}");
+    assert!(worst <= dead_band(), "worst drift in the last 60 s: {worst}");
     assert!(seeks < 3, "seeks: {seeks}");
 }
 
@@ -106,13 +111,13 @@ fn converges_without_oscillation() {
 fn recovers_from_5s_behind() {
     let (worst, seeks) = run(-5_000.0);
     eprintln!("-5000: worst={worst:.1} seeks={seeks}");
-    assert!(worst < 80.0, "worst drift in the last 60 s: {worst}");
+    assert!(worst <= dead_band(), "worst drift in the last 60 s: {worst}");
     assert!(seeks < 3, "seeks: {seeks}");
 }
 
 #[test]
 fn recovers_from_3s_ahead() {
     let (worst, seeks) = run(3_000.0);
-    assert!(worst < 80.0, "worst drift in the last 60 s: {worst}");
+    assert!(worst <= dead_band(), "worst drift in the last 60 s: {worst}");
     assert!(seeks < 3, "seeks: {seeks}");
 }

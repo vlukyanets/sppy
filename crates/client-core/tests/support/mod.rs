@@ -78,7 +78,8 @@ impl Peer {
             s.server_offset_ms,
             s.playback.as_ref().is_some_and(|p| p.hold.is_some()),
         ));
-        !r.paused() && drift.is_some_and(|d| d.abs() < 80)
+        let band = sppy_sync::SyncParams::default().dead_band_ms as i64;
+        !r.paused() && drift.is_some_and(|d| d.abs() <= band)
     }
     pub fn drift(&self) -> i64 {
         let expected = self.handle.expected_position_ms().expect("expected position") as i64;

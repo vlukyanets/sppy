@@ -15,14 +15,15 @@ run VLC headless with its data and config in a temporary folder, so your own VLC
 and Lua folder are not touched.
 
 Sync quality with real players is measured by hand (it depends on the machine's load, so
-CI does not run it): two clients with headless mpv must stay within 80 ms of the room.
+CI does not run it): two clients with headless mpv must stay within the dead band (100 ms)
+of the room.
 
 ```sh
 cargo test -p sppy-client-core --test real_mpv -- --ignored --nocapture
 ```
 
-The same for a room with one mpv and one VLC client (Unix): both must stay within 80 ms.
-VLC usually sits 40–50 ms behind (its start-up delay, inside the 80 ms dead band).
+The same for a room with one mpv and one VLC client (Unix): both must stay within 100 ms.
+VLC usually sits 40–50 ms behind (its start-up delay, inside the dead band).
 
 ```sh
 cargo test -p sppy-client-core --test real_vlc -- --ignored --nocapture
@@ -33,7 +34,7 @@ cargo test -p sppy-client-core --test real_vlc -- --ignored --nocapture
 1. `cargo run -p sppy-client-core --example two_clients` (optionally pass a media file).
    This starts an embedded server and two clients, each with its own mpv window, and
    prints the drift of both every second.
-2. Wait for playback to start in both windows. The printed drift should stay within ±80 ms.
+2. Wait for playback to start in both windows. The printed drift should stay within ±100 ms.
 3. Pause in window A → B pauses on the same frame within a second. Unpause in B → both play.
 4. Seek in either window (arrow keys, or click the progress bar) → the other follows.
 5. Change speed in a window (`[` / `]`) → it snaps back (speed is controlled by the room).

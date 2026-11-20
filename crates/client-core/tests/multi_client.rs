@@ -13,7 +13,8 @@ fn slow() -> FakeConfig {
 }
 
 #[tokio::test]
-async fn two_clients_stay_within_80ms() {
+async fn two_clients_stay_within_the_dead_band() {
+    let band = sppy_sync::SyncParams::default().dead_band_ms as i64;
     let dir = tempfile::tempdir().unwrap();
     let server = start_server(dir.path(), test_config()).await;
     let a = host(&server, FakeConfig::default()).await;
@@ -37,9 +38,9 @@ async fn two_clients_stay_within_80ms() {
     let report = format!(
         "pairwise {worst_pair}, a {worst_a}, b {worst_b}; drifts a={drifts_a:?} b={drifts_b:?}"
     );
-    assert!(worst_pair < 160, "{report}");
-    assert!(worst_a < 80, "{report}");
-    assert!(worst_b < 80, "{report}");
+    assert!(worst_pair <= 2 * band, "{report}");
+    assert!(worst_a <= band, "{report}");
+    assert!(worst_b <= band, "{report}");
     server.shutdown().await;
 }
 

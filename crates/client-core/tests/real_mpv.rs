@@ -88,7 +88,8 @@ async fn two_real_mpv_clients_stay_in_sync() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     eprintln!("real mpv worst drift: {worst} ms");
-    assert!(worst < 80, "worst drift {worst} ms");
+    let band = sppy_sync::SyncParams::default().dead_band_ms as i64;
+    assert!(worst <= band, "worst drift {worst} ms");
     // A seek from b reaches a.
     b.commands.send(UiCommand::Seek(40_000)).unwrap();
     wait("a jumped", 5, || a.state.borrow().player_position_ms.is_some_and(|p| p >= 40_000)).await;

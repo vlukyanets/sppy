@@ -26,7 +26,7 @@ pub struct SyncParams {
 impl Default for SyncParams {
     fn default() -> Self {
         SyncParams {
-            dead_band_ms: 80,
+            dead_band_ms: 100,
             speed_exit_ms: 30,
             max_speed_correction: 0.08,
             min_speed_correction: 0.02,

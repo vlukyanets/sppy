@@ -100,7 +100,8 @@ async fn real_mpv_and_vlc_clients_stay_in_sync() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     eprintln!("worst drift: mpv {worst_a} ms, VLC {worst_b} ms");
-    assert!(worst_a < 80 && worst_b < 80, "worst drift: mpv {worst_a} ms, VLC {worst_b} ms");
+    let band = sppy_sync::SyncParams::default().dead_band_ms as i64;
+    assert!(worst_a <= band && worst_b <= band, "worst drift: mpv {worst_a} ms, VLC {worst_b} ms");
     // A seek in the VLC client reaches the mpv one, and back.
     b.commands.send(UiCommand::Seek(40_000)).unwrap();
     wait("a jumped", 5, || a.state.borrow().player_position_ms.is_some_and(|p| p >= 40_000)).await;

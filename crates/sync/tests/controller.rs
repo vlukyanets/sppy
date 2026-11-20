@@ -35,7 +35,7 @@ fn defaults_match_spec() {
             p.settle_ms,
             p.max_seek_lead_ms
         ),
-        (80, 30, 10_000, 1500, 1000, 2000)
+        (100, 30, 10_000, 1500, 1000, 2000)
     );
     assert!(approx(p.max_speed_correction, 0.08));
 }
