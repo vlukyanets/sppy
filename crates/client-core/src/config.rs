@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sppy_common::config::ServerConfig;
 use sppy_player::any::{PlayerKind, PlayerSetup};
-pub use sppy_sync::CatchUp;
-use sppy_sync::SyncParams;
+pub use sppy_sync::{CatchUp, SyncParams};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

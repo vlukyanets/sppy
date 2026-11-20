@@ -4,6 +4,7 @@ pub mod chat;
 pub mod connect;
 pub mod host;
 pub mod library;
+pub mod numbers;
 pub mod participants;
 pub mod playlist;
 pub mod settings;

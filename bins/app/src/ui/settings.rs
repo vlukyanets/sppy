@@ -1,5 +1,6 @@
 //! Settings window. Saved to client.toml; player and sync settings apply on the next launch.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
@@ -9,6 +10,7 @@ use sppy_common::folders;
 use sppy_player::any::PlayerKind;
 use sppy_proto::{FolderAdding, MediaFolderProblem};
 
+use super::numbers::{self, Draft};
 use super::theme;
 use crate::app::{SppyApp, UiState};
 
@@ -35,6 +37,81 @@ fn wide_edit(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response
             .margin(egui::Margin::symmetric(8, 4))
             .desired_width(360.0),
     )
+}
+
+/// A plain text field for a number. The setting changes only while the text is valid;
+/// otherwise the reason is shown next to the field.
+fn number_field<T: Copy>(
+    ui: &mut egui::Ui,
+    drafts: &mut HashMap<&'static str, Draft>,
+    key: &'static str,
+    value: &mut T,
+    show: impl Fn(T) -> String,
+    parse: impl Fn(&str) -> Result<T, String>,
+    unit: &str,
+) {
+    let draft = drafts.entry(key).or_insert_with(|| Draft { text: show(*value), error: None });
+    ui.horizontal(|ui| {
+        let mut edit = egui::TextEdit::singleline(&mut draft.text)
+            .margin(egui::Margin::symmetric(8, 4))
+            .desired_width(80.0);
+        if draft.error.is_some() {
+            edit = edit.text_color(super::RED);
+        }
+        if ui.add(edit).changed() {
+            match parse(&draft.text) {
+                Ok(v) => {
+                    *value = v;
+                    draft.error = None;
+                }
+                Err(e) => draft.error = Some(e),
+            }
+        }
+        if !unit.is_empty() {
+            ui.label(unit);
+        }
+        if let Some(e) = &draft.error {
+            ui.colored_label(super::RED, e);
+        }
+    });
+}
+
+fn ms_field(
+    ui: &mut egui::Ui,
+    drafts: &mut HashMap<&'static str, Draft>,
+    key: &'static str,
+    value: &mut u64,
+    min: u64,
+    max: u64,
+) {
+    number_field(
+        ui,
+        drafts,
+        key,
+        value,
+        |v| v.to_string(),
+        |t| numbers::whole(t, "ms", min, max),
+        "ms",
+    );
+}
+
+fn percent_field(
+    ui: &mut egui::Ui,
+    drafts: &mut HashMap<&'static str, Draft>,
+    key: &'static str,
+    value: &mut f64,
+    min: f64,
+    max: f64,
+) {
+    number_field(
+        ui,
+        drafts,
+        key,
+        value,
+        numbers::percent_text,
+        |t| numbers::percent(t, min, max),
+        "%",
+    );
 }
 
 fn catch_up_text(m: CatchUp) -> &'static str {
@@ -70,6 +147,8 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
     if !app.ui.settings_open {
         // Looked up again the next time Settings open (it may change outside the app).
         app.ui.link_handler = None;
+        // Unsaved typos are not kept: the fields show the settings again next time.
+        app.ui.number_drafts.clear();
         return;
     }
     if app.ui.link_handler.is_none() {
@@ -289,8 +368,14 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 ui.checkbox(&mut c.prefetch_next, "Download the next playlist item in advance");
                 form(ui, "downloads", |ui| {
                     ui.label("Cache limit");
-                    ui.add(
-                        egui::DragValue::new(&mut c.cache_limit_gb).range(1..=10_000).suffix(" GB"),
+                    number_field(
+                        ui,
+                        &mut app.ui.number_drafts,
+                        "cache_limit_gb",
+                        &mut c.cache_limit_gb,
+                        |v| v.to_string(),
+                        |t| numbers::whole(t, "GB", 1, 10_000),
+                        "GB",
                     );
                     ui.end_row();
                     ui.label("In use");
@@ -330,9 +415,16 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                     ui.end_row();
                     ui.label("Port");
                     let mut port = h.listen.port();
-                    if ui.add(egui::DragValue::new(&mut port).range(1..=65535)).changed() {
-                        h.listen.set_port(port);
-                    }
+                    number_field(
+                        ui,
+                        &mut app.ui.number_drafts,
+                        "port",
+                        &mut port,
+                        |v| v.to_string(),
+                        |t| numbers::whole(t, "", 1, 65_535).map(|p| p as u16),
+                        "",
+                    );
+                    h.listen.set_port(port);
                     ui.end_row();
                     ui.label("Public address");
                     let mut public = h.public_address.clone().unwrap_or_default();
@@ -346,31 +438,70 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             theme::card(ui, "Sync", None, |ui| {
                 ui.collapsing("Advanced sync settings", |ui| {
                     let a = &mut c.advanced;
+                    let drafts = &mut app.ui.number_drafts;
                     form(ui, "sync", |ui| {
-                        let row = |ui: &mut egui::Ui, label: &str, v: &mut u64| {
+                        let rows: [(&str, &'static str, &mut u64, u64, u64); 7] = [
+                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10, 5_000),
+                            (
+                                "Speed correction exit",
+                                "speed_exit_ms",
+                                &mut a.speed_exit_ms,
+                                0,
+                                5_000,
+                            ),
+                            (
+                                "Speed correction horizon",
+                                "horizon_ms",
+                                &mut a.horizon_ms,
+                                1_000,
+                                60_000,
+                            ),
+                            (
+                                "Seek threshold",
+                                "seek_threshold_ms",
+                                &mut a.seek_threshold_ms,
+                                100,
+                                60_000,
+                            ),
+                            ("Settle time", "settle_ms", &mut a.settle_ms, 0, 10_000),
+                            (
+                                "Max seek lead",
+                                "max_seek_lead_ms",
+                                &mut a.max_seek_lead_ms,
+                                0,
+                                10_000,
+                            ),
+                            (
+                                "Re-seek threshold",
+                                "reseek_threshold_ms",
+                                &mut a.reseek_threshold_ms,
+                                50,
+                                10_000,
+                            ),
+                        ];
+                        for (label, key, value, min, max) in rows {
                             ui.label(label);
-                            ui.add(egui::DragValue::new(v).suffix(" ms"));
+                            ms_field(ui, drafts, key, value, min, max);
                             ui.end_row();
-                        };
-                        row(ui, "Dead band", &mut a.dead_band_ms);
-                        row(ui, "Speed correction exit", &mut a.speed_exit_ms);
-                        row(ui, "Speed correction horizon", &mut a.horizon_ms);
-                        row(ui, "Seek threshold", &mut a.seek_threshold_ms);
-                        row(ui, "Settle time", &mut a.settle_ms);
-                        row(ui, "Max seek lead", &mut a.max_seek_lead_ms);
-                        row(ui, "Re-seek threshold", &mut a.reseek_threshold_ms);
+                        }
                         ui.label("Min speed correction");
-                        ui.add(
-                            egui::DragValue::new(&mut a.min_speed_correction)
-                                .range(0.0..=0.2)
-                                .speed(0.005),
+                        percent_field(
+                            ui,
+                            drafts,
+                            "min_speed",
+                            &mut a.min_speed_correction,
+                            0.0,
+                            20.0,
                         );
                         ui.end_row();
                         ui.label("Max speed correction");
-                        ui.add(
-                            egui::DragValue::new(&mut a.max_speed_correction)
-                                .range(0.0..=0.5)
-                                .speed(0.005),
+                        percent_field(
+                            ui,
+                            drafts,
+                            "max_speed",
+                            &mut a.max_speed_correction,
+                            1.0,
+                            50.0,
                         );
                         ui.end_row();
                     });
@@ -378,15 +509,23 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             });
 
             ui.add_space(4.0);
+            let typo = app.ui.number_drafts.values().any(|d| d.error.is_some());
+            let conflict = numbers::sync_problems(&app.config.advanced).first().copied();
             ui.horizontal(|ui| {
-                if ui.add(theme::primary("Save")).clicked() {
+                if ui.add_enabled(!typo && conflict.is_none(), theme::primary("Save")).clicked() {
                     save = true;
                 }
-                theme::muted(
-                    ui,
-                    "Folders, languages and catching up apply on Save; advanced sync and \
-                     hosting on the next start.",
-                );
+                if typo {
+                    ui.colored_label(super::RED, "Fix the values in red to save.");
+                } else if let Some(conflict) = conflict {
+                    ui.colored_label(super::RED, format!("Advanced sync settings: {conflict}"));
+                } else {
+                    theme::muted(
+                        ui,
+                        "Folders, languages and catching up apply on Save; advanced sync and \
+                         hosting on the next start.",
+                    );
+                }
             });
         });
     app.ui.settings_open = open;

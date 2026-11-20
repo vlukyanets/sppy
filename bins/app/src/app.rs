@@ -64,6 +64,8 @@ pub struct UiState {
     /// Whether this app opens `sppy://` links: looked up when Settings open.
     pub link_handler: Option<Option<bool>>,
     pub link_handler_error: Option<String>,
+    /// What is typed into the number fields of the settings, while they are open.
+    pub number_drafts: std::collections::HashMap<&'static str, crate::ui::numbers::Draft>,
 }
 
 pub struct SppyApp {
@@ -147,6 +149,7 @@ impl SppyApp {
             invite_received: None,
             link_handler: None,
             link_handler_error: None,
+            number_drafts: Default::default(),
         };
         let events = handle.subscribe_events();
         SppyApp {
