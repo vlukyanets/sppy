@@ -5,6 +5,8 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Release runs the same checks on the tagged commit before it builds anything.
+  workflow_call:
 
 # A newer push to the same branch makes an unfinished run pointless.
 concurrency:

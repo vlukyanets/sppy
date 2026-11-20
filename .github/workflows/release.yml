@@ -13,7 +13,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A tag can be pushed before CI on its commit has finished, or on a commit CI never
+  # saw; nothing is built or published unless the checks pass on exactly this commit.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
