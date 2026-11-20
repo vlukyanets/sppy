@@ -68,7 +68,7 @@ impl DriftController {
 
     /// Suppress corrections for `settle_ms` (after a load or a seek we did not issue).
     pub fn reset_settle(&mut self, now_ms: u64) {
-        self.settle_until = now_ms + self.p.settle_ms;
+        self.settle_until = now_ms.saturating_add(self.p.settle_ms);
         self.correcting = false;
     }
 
@@ -111,12 +111,12 @@ impl DriftController {
                 // Starting playback: a seek now is invisible, so fix any drift right away.
                 if abs > self.p.dead_band_ms {
                     out.push(Correction::Seek {
-                        position_ms: target.position_ms + self.seek_lead_ms,
+                        position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
                     });
                     self.seek_issued = true;
                     self.reseeks = 0;
                 }
-                self.settle_until = now_ms + self.p.settle_ms;
+                self.settle_until = now_ms.saturating_add(self.p.settle_ms);
                 self.correcting = false;
             }
             return out;
@@ -135,13 +135,13 @@ impl DriftController {
             }
             if abs > self.p.dead_band_ms {
                 out.push(Correction::Seek { position_ms: target.position_ms });
-                self.settle_until = now_ms + self.p.settle_ms;
+                self.settle_until = now_ms.saturating_add(self.p.settle_ms);
             }
             return out;
         }
 
         if let Some(after) = self.room_comes_back_ms
-            && drift < -(after as i64)
+            && drift < -i64::try_from(after).unwrap_or(i64::MAX)
         {
             let since = *self.waiting_since.get_or_insert(now_ms);
             if now_ms.saturating_sub(since) < LATECOMER_WAIT_MS {
@@ -156,11 +156,13 @@ impl DriftController {
         }
 
         if abs > self.p.seek_threshold_ms {
-            out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
+            out.push(Correction::Seek {
+                position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
+            });
             self.seek_issued = true;
             self.reseeks = 0;
             self.correcting = false;
-            self.settle_until = now_ms + self.p.settle_ms;
+            self.settle_until = now_ms.saturating_add(self.p.settle_ms);
             if (current_speed - target.room_speed).abs() > SPEED_EPS {
                 self.set_speed(target.room_speed, &mut out);
             }
@@ -171,17 +173,20 @@ impl DriftController {
             self.seek_issued = false;
             if abs > self.p.dead_band_ms {
                 if drift < 0 {
-                    self.seek_lead_ms = (self.seek_lead_ms + abs).min(self.p.max_seek_lead_ms);
+                    self.seek_lead_ms =
+                        self.seek_lead_ms.saturating_add(abs).min(self.p.max_seek_lead_ms);
                 } else {
                     self.seek_lead_ms = self.seek_lead_ms.saturating_sub(abs);
                 }
             }
             if abs > self.p.reseek_threshold_ms && self.reseeks < MAX_RESEEKS {
                 self.reseeks += 1;
-                out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
+                out.push(Correction::Seek {
+                    position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
+                });
                 self.seek_issued = true;
                 self.correcting = false;
-                self.settle_until = now_ms + self.p.settle_ms;
+                self.settle_until = now_ms.saturating_add(self.p.settle_ms);
                 return out;
             }
             self.reseeks = 0;
@@ -198,10 +203,12 @@ impl DriftController {
                 self.set_speed(target.room_speed, &mut out);
             }
             if abs > self.p.jump_threshold_ms {
-                out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
+                out.push(Correction::Seek {
+                    position_ms: target.position_ms.saturating_add(self.seek_lead_ms),
+                });
                 self.seek_issued = true;
                 self.reseeks = 0;
-                self.settle_until = now_ms + self.p.settle_ms;
+                self.settle_until = now_ms.saturating_add(self.p.settle_ms);
             }
             return out;
         }
@@ -238,7 +245,7 @@ impl DriftController {
     fn may_send_pause(&mut self, paused: bool, now_ms: u64) -> bool {
         if let Some((p, t)) = self.last_pause_cmd
             && p == paused
-            && now_ms < t + self.p.settle_ms
+            && now_ms < t.saturating_add(self.p.settle_ms)
         {
             return false;
         }

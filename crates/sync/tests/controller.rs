@@ -326,3 +326,31 @@ fn a_latecomer_stops_waiting_when_the_room_does_not_come() {
     let out = c.update(3_100, &target(13_100), &obs(11_100, 1.0));
     assert!(out.iter().any(|c| matches!(c, Correction::Seek { .. })), "{out:?}");
 }
+
+/// Thresholds come from a settings field without an upper limit.
+#[test]
+fn huge_thresholds_do_not_overflow() {
+    let p = SyncParams {
+        dead_band_ms: u64::MAX,
+        speed_exit_ms: u64::MAX,
+        horizon_ms: u64::MAX,
+        seek_threshold_ms: u64::MAX,
+        settle_ms: u64::MAX,
+        max_seek_lead_ms: u64::MAX,
+        reseek_threshold_ms: u64::MAX,
+        jump_threshold_ms: u64::MAX,
+        ..SyncParams::default()
+    };
+    for catch_up in [CatchUp::Speed, CatchUp::Jumps] {
+        let mut k = DriftController::new(p.clone());
+        k.set_catch_up(catch_up);
+        k.set_room_comes_back(Some(1 << 63));
+        k.reset_settle(1000);
+        k.update(2000, &target(10_000), &Observed { position_ms: 0, paused: true, speed: 1.0 });
+        k.update(3000, &target(50_000), &obs(0, 1.0));
+    }
+    let mut k = DriftController::new(SyncParams { settle_ms: u64::MAX, ..SyncParams::default() });
+    let c = k.update(0, &target(10_000), &obs(0, 1.0));
+    assert!(c.contains(&Correction::Seek { position_ms: 10_000 }), "{c:?}");
+    k.update(1000, &target(11_000), &obs(10_000, 1.0));
+}
