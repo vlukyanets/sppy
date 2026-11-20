@@ -18,6 +18,10 @@ struct Vlc {
 }
 
 async fn launch() -> Option<Vlc> {
+    launch_with(PathBuf::from("yt-dlp")).await
+}
+
+async fn launch_with(ytdlp: PathBuf) -> Option<Vlc> {
     if !vlc_available() {
         eprintln!("vlc not found, skipping");
         return None;
@@ -26,6 +30,7 @@ async fn launch() -> Option<Vlc> {
     let cfg = VlcConfig {
         headless: true,
         isolated_home: Some(dir.path().join("home")),
+        ytdlp,
         ..VlcConfig::default()
     };
     let player = VlcLauncher::new(cfg).launch().await.expect("launch vlc");
@@ -207,4 +212,98 @@ async fn vlc_opens_names_with_spaces_and_non_utf8_bytes() {
 async fn vlc_module_goes_into_the_isolated_home() {
     let Some(v) = launch().await else { return };
     assert!(v.dir.path().join("home/data/vlc/lua/intf/sppy.lua").is_file());
+}
+
+fn ytdlp_available() -> bool {
+    std::process::Command::new("yt-dlp").arg("--version").output().is_ok_and(|o| o.status.success())
+}
+
+/// Serves one file over plain HTTP on 127.0.0.1, so links work without the internet.
+async fn serve_file(file: PathBuf) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let name = file.file_name().unwrap().to_string_lossy().into_owned();
+    let path = format!("/{name}");
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let (file, path) = (file.clone(), path.clone());
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                let mut first = request.lines().next().unwrap_or("").split(' ');
+                let (method, target) = (first.next().unwrap_or(""), first.next().unwrap_or(""));
+                let reply = if target == path {
+                    let body = std::fs::read(&file).unwrap();
+                    let mut r = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: video/x-matroska\r\nContent-Length: \
+                         {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .into_bytes();
+                    if method != "HEAD" {
+                        r.extend_from_slice(&body);
+                    }
+                    r
+                } else {
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_vec()
+                };
+                let _ = stream.write_all(&reply).await;
+            });
+        }
+    });
+    format!("http://127.0.0.1:{port}/{name}")
+}
+
+#[tokio::test]
+async fn vlc_link_is_resolved_with_ytdlp() {
+    if !ytdlp_available() {
+        eprintln!("yt-dlp not found, skipping");
+        return;
+    }
+    let Some(mut v) = launch().await else { return };
+    let Some(clip) = make_clip(v.dir.path(), "clip.mkv", 3) else { return };
+    let url = serve_file(clip).await;
+    v.player.load(MediaSource::Link(url), vec![]).await.unwrap();
+    let ev = wait_for(&mut v.player, 30, |e| matches!(e, PlayerEvent::FileLoaded { .. })).await;
+    // yt-dlp's title, not the last part of the URL that VLC shows by itself.
+    assert!(matches!(&ev, PlayerEvent::FileLoaded { title: Some(t), .. } if t == "clip"), "{ev:?}");
+}
+
+#[tokio::test]
+async fn vlc_link_failure_reports_ytdlps_reason() {
+    if !ytdlp_available() {
+        eprintln!("yt-dlp not found, skipping");
+        return;
+    }
+    let Some(mut v) = launch().await else { return };
+    let Some(clip) = make_clip(v.dir.path(), "clip.mkv", 3) else { return };
+    let url = serve_file(clip).await.replace("clip.mkv", "missing.mkv");
+    v.player.load(MediaSource::Link(url), vec![]).await.unwrap();
+    let ev = wait_for(&mut v.player, 30, |e| matches!(e, PlayerEvent::LoadFailed { .. })).await;
+    assert!(
+        matches!(&ev, PlayerEvent::LoadFailed { message } if message.starts_with("yt-dlp:") && message.contains("404")),
+        "{ev:?}"
+    );
+}
+
+#[tokio::test]
+async fn vlc_opens_a_link_itself_without_ytdlp() {
+    let Some(mut v) = launch_with(PathBuf::from("/nonexistent/yt-dlp")).await else { return };
+    let Some(clip) = make_clip(v.dir.path(), "clip.mkv", 3) else { return };
+    let url = serve_file(clip).await;
+    v.player.load(MediaSource::Link(url), vec![]).await.unwrap();
+    let ev = wait_for(&mut v.player, 10, |e| matches!(e, PlayerEvent::FileLoaded { .. })).await;
+    assert!(
+        matches!(&ev, PlayerEvent::FileLoaded { title: Some(t), .. } if t == "clip.mkv"),
+        "{ev:?}"
+    );
 }

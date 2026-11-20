@@ -14,7 +14,7 @@ use support::*;
 /// The languages the player had when it loaded `url`.
 fn languages_at_load(p: &Peer, url: &str) -> Option<TrackLanguages> {
     let cmds = p.launcher.remote()?.commands();
-    let load = cmds.iter().position(|c| *c == FakeCmd::Load(MediaSource::Url(url.into())))?;
+    let load = cmds.iter().position(|c| *c == FakeCmd::Load(MediaSource::Link(url.into())))?;
     cmds[..load].iter().rev().find_map(|c| match c {
         FakeCmd::TrackLanguages(l) => Some(l.clone()),
         _ => None,

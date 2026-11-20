@@ -9,7 +9,8 @@ cargo test --workspace --all-features
 ```
 
 Tests that need mpv (`sppy-player` mpv tests) are skipped when `mpv` is not on `PATH`;
-the VLC tests (`sppy-player --test vlc_player`, Unix only) likewise when `vlc` is not. They
+the VLC tests (`sppy-player --test vlc_player`, Unix only) likewise when `vlc` is not, and
+their link tests when `yt-dlp` is not (they serve a clip from 127.0.0.1, no internet). They
 run VLC headless with its data and config in a temporary folder, so your own VLC settings
 and Lua folder are not touched.
 
@@ -104,8 +105,11 @@ Needs VLC 3 with its window (the automated tests only run it headless).
 4. Press VLC's **Stop** in the middle → VLC opens the item again where it was and catches up.
 5. Seek close to the end of an item → the room moves on to the next item in both players.
 6. Messages from sppy appear in VLC's video (top left).
-7. Windows: with VLC installed by its installer and the path left at `vlc`, sppy finds it.
-8. Close VLC's window → the app shows the player as closed, like with mpv.
+7. Add a YouTube link: VLC shows the video's title (not `videoplayback`), plays picture
+   and sound, and stays in sync with mpv. A broken link shows yt-dlp's reason.
+8. Windows: with VLC installed by its installer and the path left at `vlc`, sppy finds it;
+   adding a link shows no console window.
+9. Close VLC's window → the app shows the player as closed, like with mpv.
 
 ## Manual: headless server over Tailscale
 

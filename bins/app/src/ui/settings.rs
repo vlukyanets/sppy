@@ -120,8 +120,8 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 if c.player.kind() == PlayerKind::Vlc {
                     theme::muted(
                         ui,
-                        "sppy puts its control module (sppy.lua) into VLC's Lua folder. VLC \
-                         opens web links with its own scripts, not yt-dlp.",
+                        "sppy puts its control module (sppy.lua) into VLC's Lua folder. Web \
+                         links need yt-dlp, as with mpv.",
                     );
                 }
                 if !c.trusted_sites.is_empty() {

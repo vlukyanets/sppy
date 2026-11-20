@@ -14,6 +14,7 @@ use tokio::time::Instant;
 
 use super::tracker::{Action, Tracker};
 use super::wire::{self, Command, MODULE_VERSION, WireError};
+use super::ytdlp;
 use crate::{
     Capabilities, MediaSource, Player, PlayerError, PlayerEvent, PlayerLauncher, PlayerResult,
     TrackLanguages,
@@ -30,6 +31,8 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often the status is polled: the module cannot speak first.
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 const OSD_US_PER_MS: u64 = 1000;
+/// How long yt-dlp may take to find the media of a link.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct VlcConfig {
@@ -40,6 +43,8 @@ pub struct VlcConfig {
     /// Unix: run VLC with its data, config and cache under this folder and put the module
     /// there instead of the user's own VLC folders (tests).
     pub isolated_home: Option<PathBuf>,
+    /// yt-dlp, which finds the media of links; without it VLC tries its own scripts.
+    pub ytdlp: PathBuf,
 }
 
 impl Default for VlcConfig {
@@ -49,6 +54,7 @@ impl Default for VlcConfig {
             extra_args: Vec::new(),
             headless: false,
             isolated_home: None,
+            ytdlp: PathBuf::from("yt-dlp"),
         }
     }
 }
@@ -170,13 +176,21 @@ impl PlayerLauncher for VlcLauncher {
 
 #[derive(Debug)]
 enum Op {
-    Load { uri: String, subtitles: Vec<String> },
+    Load { media: Target, subtitles: Vec<String> },
     Languages(TrackLanguages),
     Seek(u64),
     Play,
     Pause,
     Speed(f64),
     Osd { text: String, duration_ms: u64 },
+}
+
+#[derive(Debug, Clone)]
+enum Target {
+    /// Opened as it is.
+    Uri(String),
+    /// Resolved with yt-dlp first.
+    Link(String),
 }
 
 type Request = (Op, oneshot::Sender<PlayerResult>);
@@ -189,7 +203,7 @@ pub struct VlcPlayer {
 
 fn source_uri(src: &MediaSource) -> String {
     match src {
-        MediaSource::Url(u) => u.clone(),
+        MediaSource::Url(u) | MediaSource::Link(u) => u.clone(),
         MediaSource::Path(p) => wire::file_uri(p),
     }
 }
@@ -300,7 +314,7 @@ impl VlcPlayer {
 
         let (tx, events) = mpsc::unbounded_channel();
         let (requests, rx) = mpsc::unbounded_channel();
-        tokio::spawn(drive(Link { read, write }, rx, tx.clone()));
+        tokio::spawn(drive(Link { read, write }, rx, tx.clone(), cfg.ytdlp.clone()));
 
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -362,24 +376,76 @@ struct Item {
     subtitles: Vec<String>,
 }
 
+#[derive(Debug)]
+enum ResolveError {
+    NotInstalled,
+    Failed(String),
+}
+
+async fn resolve(program: PathBuf, url: String) -> Result<ytdlp::Resolved, ResolveError> {
+    let mut command = tokio::process::Command::new(&program);
+    command.args(ytdlp::args(&url)).stdin(Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // yt-dlp is a console program; the app has no console to share.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    match tokio::time::timeout(RESOLVE_TIMEOUT, command.output()).await {
+        Err(_) => Err(ResolveError::Failed("took too long".into())),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Err(ResolveError::NotInstalled),
+        Ok(Err(e)) => Err(ResolveError::Failed(e.to_string())),
+        Ok(Ok(out)) if !out.status.success() => {
+            Err(ResolveError::Failed(ytdlp::error_message(&String::from_utf8_lossy(&out.stderr))))
+        }
+        Ok(Ok(out)) => {
+            ytdlp::parse(&String::from_utf8_lossy(&out.stdout)).map_err(ResolveError::Failed)
+        }
+    }
+}
+
+/// A finished yt-dlp run: the load it belongs to, the link, its subtitles and the result.
+type ResolvedLink = (u64, String, Vec<String>, Result<ytdlp::Resolved, ResolveError>);
+
 /// Owns the connection: serves requests and polls the status in between.
+struct Driver {
+    link: Link,
+    tracker: Tracker,
+    languages: TrackLanguages,
+    item: Option<Item>,
+    events: mpsc::UnboundedSender<PlayerEvent>,
+    ytdlp: PathBuf,
+    /// Counts loads, so that a link resolved for an earlier one is dropped.
+    generation: u64,
+    resolved_tx: mpsc::UnboundedSender<ResolvedLink>,
+    start: Instant,
+}
+
 async fn drive(
-    mut link: Link,
+    link: Link,
     mut requests: mpsc::UnboundedReceiver<Request>,
     events: mpsc::UnboundedSender<PlayerEvent>,
+    ytdlp: PathBuf,
 ) {
-    let start = Instant::now();
-    let now_ms = || start.elapsed().as_millis() as u64;
-    let mut tracker = Tracker::new();
-    let mut languages = TrackLanguages::default();
-    let mut item: Option<Item> = None;
+    let (resolved_tx, mut resolved_rx) = mpsc::unbounded_channel();
+    let mut d = Driver {
+        link,
+        tracker: Tracker::new(),
+        languages: TrackLanguages::default(),
+        item: None,
+        events,
+        ytdlp,
+        generation: 0,
+        resolved_tx,
+        start: Instant::now(),
+    };
     let mut tick = tokio::time::interval(POLL_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let actions = tokio::select! {
             req = requests.recv() => {
                 let Some((op, reply)) = req else { break };
-                let result = serve(&mut link, &mut tracker, &mut languages, &mut item, op, now_ms()).await;
+                let result = d.serve(op).await;
                 let gone = matches!(result, Err(PlayerError::Gone));
                 let _ = reply.send(result);
                 if gone {
@@ -387,8 +453,21 @@ async fn drive(
                 }
                 continue;
             }
+            Some((generation, url, subtitles, result)) = resolved_rx.recv() => {
+                if generation != d.generation {
+                    continue;
+                }
+                match d.resolved(url, subtitles, result).await {
+                    Ok(actions) => actions,
+                    Err(PlayerError::Gone) => return,
+                    Err(e) => {
+                        tracing::warn!("VLC: {e}");
+                        continue;
+                    }
+                }
+            }
             _ = tick.tick() => {
-                let status = match link.call(&Command::Status).await {
+                let status = match d.link.call(&Command::Status).await {
                     Ok(line) => wire::parse_status(&line),
                     Err(PlayerError::Gone) => return,
                     Err(e) => {
@@ -397,7 +476,7 @@ async fn drive(
                     }
                 };
                 match status {
-                    Ok(s) => tracker.observe(now_ms(), s.as_ref()),
+                    Ok(s) => d.tracker.observe(d.now_ms(), s.as_ref()),
                     Err(e) => {
                         tracing::warn!("VLC status: {e}");
                         continue;
@@ -406,24 +485,7 @@ async fn drive(
             }
         };
         for action in actions {
-            let result = match action {
-                Action::Event(e) => {
-                    let _ = events.send(e);
-                    Ok(())
-                }
-                Action::AddSubtitles => add_subtitles(&mut link, item.as_ref()).await,
-                Action::Reload => match &item {
-                    Some(it) => link.send(&it.load).await,
-                    None => Ok(()),
-                },
-                Action::Restore { position_ms, paused } => {
-                    let seek = link.send(&Command::Seek { us: position_ms * 1000 }).await;
-                    let state =
-                        link.send(if paused { &Command::Pause } else { &Command::Play }).await;
-                    seek.and(state)
-                }
-            };
-            match result {
+            match d.act(action).await {
                 Err(PlayerError::Gone) => return,
                 Err(e) => tracing::warn!("VLC: {e}"),
                 Ok(()) => {}
@@ -431,67 +493,139 @@ async fn drive(
         }
     }
     // The player was dropped: close VLC rather than leave it unsynchronised.
-    let _ = link.send(&Command::Quit).await;
+    let _ = d.link.send(&Command::Quit).await;
 }
 
-async fn add_subtitles(link: &mut Link, item: Option<&Item>) -> PlayerResult {
-    let Some(item) = item else { return Ok(()) };
-    // Each subtitle added becomes the shown one; the caller lists the preferred first.
-    for sub in item.subtitles.iter().rev() {
-        if let Err(e) = link.send(&Command::Sub(sub.clone())).await {
-            tracing::warn!("cannot add subtitle {sub}: {e}");
+impl Driver {
+    fn now_ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+
+    async fn act(&mut self, action: Action) -> PlayerResult {
+        match action {
+            Action::Event(e) => {
+                let _ = self.events.send(e);
+                Ok(())
+            }
+            Action::AddSubtitles => self.add_subtitles().await,
+            Action::Reload => match &self.item {
+                Some(it) => self.link.send(&it.load).await,
+                None => Ok(()),
+            },
+            Action::Restore { position_ms, paused } => {
+                let seek = self.link.send(&Command::Seek { us: position_ms * 1000 }).await;
+                let state =
+                    self.link.send(if paused { &Command::Pause } else { &Command::Play }).await;
+                seek.and(state)
+            }
         }
     }
-    Ok(())
-}
 
-async fn serve(
-    link: &mut Link,
-    tracker: &mut Tracker,
-    languages: &mut TrackLanguages,
-    item: &mut Option<Item>,
-    op: Op,
-    now_ms: u64,
-) -> PlayerResult {
-    match op {
-        Op::Load { uri, subtitles } => {
-            let load = Command::Load {
-                uri,
-                audio_languages: crate::languages::language_codes(&languages.audio),
-                subtitle_languages: crate::languages::language_codes(&languages.subtitles),
-            };
-            // Checked before VLC loses the current item.
-            load.encode()?;
-            for s in &subtitles {
-                Command::Sub(s.clone()).encode()?;
+    async fn add_subtitles(&mut self) -> PlayerResult {
+        let Some(item) = &self.item else { return Ok(()) };
+        // Each subtitle added becomes the shown one; the caller lists the preferred first.
+        for sub in item.subtitles.iter().rev() {
+            if let Err(e) = self.link.send(&Command::Sub(sub.clone())).await {
+                tracing::warn!("cannot add subtitle {sub}: {e}");
             }
-            tracker.load_sent(now_ms);
-            let result = link.send(&load).await;
-            *item = Some(Item { load, subtitles });
-            result
         }
-        Op::Languages(l) => {
-            *languages = l;
-            Ok(())
+        Ok(())
+    }
+
+    /// Send an item to VLC.
+    async fn open(
+        &mut self,
+        uri: String,
+        title: String,
+        options: Vec<String>,
+        subtitles: Vec<String>,
+    ) -> PlayerResult {
+        let load = Command::Load {
+            uri,
+            audio_languages: crate::languages::language_codes(&self.languages.audio),
+            subtitle_languages: crate::languages::language_codes(&self.languages.subtitles),
+            title,
+            options,
+        };
+        // Checked before VLC loses the current item.
+        load.encode()?;
+        let now = self.now_ms();
+        self.tracker.load_sent(now);
+        let result = self.link.send(&load).await;
+        self.item = Some(Item { load, subtitles });
+        result
+    }
+
+    async fn resolved(
+        &mut self,
+        url: String,
+        subtitles: Vec<String>,
+        result: Result<ytdlp::Resolved, ResolveError>,
+    ) -> PlayerResult<Vec<Action>> {
+        match result {
+            Ok(r) => {
+                let options = ytdlp::item_options(&r);
+                let title = r.title.unwrap_or_default();
+                self.open(r.media, title, options, subtitles).await?;
+            }
+            Err(ResolveError::NotInstalled) => {
+                tracing::warn!("yt-dlp not found; VLC opens the link with its own scripts");
+                self.open(url, String::new(), Vec::new(), subtitles).await?;
+            }
+            Err(ResolveError::Failed(reason)) => {
+                return Ok(self.tracker.fail(format!("yt-dlp: {reason}")));
+            }
         }
-        Op::Seek(position_ms) => {
-            if tracker.seek_sent(position_ms, now_ms) {
-                match item {
-                    Some(it) => link.send(&it.load).await,
-                    None => Ok(()),
+        Ok(Vec::new())
+    }
+
+    async fn serve(&mut self, op: Op) -> PlayerResult {
+        let now = self.now_ms();
+        match op {
+            Op::Load { media, subtitles } => {
+                for s in &subtitles {
+                    Command::Sub(s.clone()).encode()?;
                 }
-            } else {
-                link.send(&Command::Seek { us: position_ms * 1000 }).await
+                self.generation += 1;
+                match media {
+                    Target::Uri(uri) => self.open(uri, String::new(), Vec::new(), subtitles).await,
+                    Target::Link(url) => {
+                        self.tracker.resolving();
+                        self.item = None;
+                        let (generation, tx) = (self.generation, self.resolved_tx.clone());
+                        let program = self.ytdlp.clone();
+                        tokio::spawn(async move {
+                            let result = resolve(program, url.clone()).await;
+                            let _ = tx.send((generation, url, subtitles, result));
+                        });
+                        // The previous item must not go on playing meanwhile.
+                        self.link.send(&Command::Clear).await
+                    }
+                }
             }
-        }
-        Op::Play => link.send(&Command::Play).await,
-        Op::Pause => link.send(&Command::Pause).await,
-        Op::Speed(speed) => {
-            tracker.speed_sent(speed);
-            link.send(&Command::Rate { ppm: wire::speed_to_ppm(speed) }).await
-        }
-        Op::Osd { text, duration_ms } => {
-            link.send(&Command::Osd { us: duration_ms * OSD_US_PER_MS, text }).await
+            Op::Languages(l) => {
+                self.languages = l;
+                Ok(())
+            }
+            Op::Seek(position_ms) => {
+                if self.tracker.seek_sent(position_ms, now) {
+                    match &self.item {
+                        Some(it) => self.link.send(&it.load).await,
+                        None => Ok(()),
+                    }
+                } else {
+                    self.link.send(&Command::Seek { us: position_ms * 1000 }).await
+                }
+            }
+            Op::Play => self.link.send(&Command::Play).await,
+            Op::Pause => self.link.send(&Command::Pause).await,
+            Op::Speed(speed) => {
+                self.tracker.speed_sent(speed);
+                self.link.send(&Command::Rate { ppm: wire::speed_to_ppm(speed) }).await
+            }
+            Op::Osd { text, duration_ms } => {
+                self.link.send(&Command::Osd { us: duration_ms * OSD_US_PER_MS, text }).await
+            }
         }
     }
 }
@@ -502,9 +636,12 @@ impl Player for VlcPlayer {
     }
 
     async fn load(&mut self, media: MediaSource, subtitles: Vec<MediaSource>) -> PlayerResult {
-        let uri = source_uri(&media);
+        let media = match &media {
+            MediaSource::Link(url) => Target::Link(url.clone()),
+            other => Target::Uri(source_uri(other)),
+        };
         let subtitles = subtitles.iter().map(source_uri).collect();
-        self.request(Op::Load { uri, subtitles }).await
+        self.request(Op::Load { media, subtitles }).await
     }
 
     async fn set_track_languages(&mut self, languages: &TrackLanguages) -> PlayerResult {

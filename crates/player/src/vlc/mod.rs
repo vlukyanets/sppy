@@ -4,5 +4,6 @@
 mod player;
 pub mod tracker;
 pub mod wire;
+pub mod ytdlp;
 
 pub use player::{MODULE, VlcConfig, VlcLauncher, VlcPlayer, install_module, user_lua_intf_dir};

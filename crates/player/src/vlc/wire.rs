@@ -7,7 +7,7 @@
 use std::path::Path;
 
 /// Version the module sends in its hello; bumped with every change of the protocol.
-pub const MODULE_VERSION: &str = "1";
+pub const MODULE_VERSION: &str = "2";
 
 /// VLC's input state (`input_state_e`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +52,10 @@ pub enum Command {
         uri: String,
         audio_languages: String,
         subtitle_languages: String,
+        /// Shown instead of the URL's last part (e.g. `videoplayback`); empty: VLC's own.
+        title: String,
+        /// Further item options, `name=value` (e.g. `input-slave=…`).
+        options: Vec<String>,
     },
     /// Add a subtitle to the open input; the last one added is shown.
     Sub(String),
@@ -67,6 +71,8 @@ pub enum Command {
         us: u64,
         text: String,
     },
+    /// Empty the playlist: nothing plays while a link is being resolved.
+    Clear,
     Quit,
 }
 
@@ -77,28 +83,38 @@ fn field(s: &str) -> Result<&str, WireError> {
     Ok(s)
 }
 
+/// Text that cannot split a command: control characters become spaces.
+fn one_line(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+}
+
 impl Command {
     /// The line to send, without the newline.
     pub fn encode(&self) -> Result<String, WireError> {
         Ok(match self {
             Command::Status => "status".into(),
-            Command::Load { uri, audio_languages, subtitle_languages } => format!(
-                "load\t{}\t{}\t{}",
-                field(uri)?,
-                field(audio_languages)?,
-                field(subtitle_languages)?
-            ),
+            Command::Load { uri, audio_languages, subtitle_languages, title, options } => {
+                let mut line = format!(
+                    "load\t{}\t{}\t{}\t{}",
+                    field(uri)?,
+                    field(audio_languages)?,
+                    field(subtitle_languages)?,
+                    one_line(title)
+                );
+                for o in options {
+                    line.push('\t');
+                    line.push_str(field(o)?);
+                }
+                line
+            }
             Command::Sub(uri) => format!("sub\t{}", field(uri)?),
             Command::Seek { us } => format!("seek\t{us}"),
             Command::Play => "play".into(),
             Command::Pause => "pause".into(),
             Command::Rate { ppm } => format!("rate\t{ppm}"),
-            Command::Osd { us, text } => {
-                // A message is shown on one line anyway.
-                let text: String =
-                    text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
-                format!("osd\t{us}\t{text}")
-            }
+            // A message is shown on one line anyway.
+            Command::Osd { us, text } => format!("osd\t{us}\t{}", one_line(text)),
+            Command::Clear => "clear".into(),
             Command::Quit => "quit".into(),
         })
     }
@@ -238,8 +254,29 @@ mod tests {
             uri: "file:///a.mkv".into(),
             audio_languages: "ru,rus".into(),
             subtitle_languages: String::new(),
+            title: String::new(),
+            options: vec![],
         };
-        assert_eq!(load.encode().unwrap(), "load\tfile:///a.mkv\tru,rus\t");
+        assert_eq!(load.encode().unwrap(), "load\tfile:///a.mkv\tru,rus\t\t");
+        let link = Command::Load {
+            uri: "https://cdn/v.mp4".into(),
+            audio_languages: String::new(),
+            subtitle_languages: String::new(),
+            title: "Ep 1\nfinale".into(),
+            options: vec!["input-slave=https://cdn/a.m4a".into()],
+        };
+        assert_eq!(
+            link.encode().unwrap(),
+            "load\thttps://cdn/v.mp4\t\t\tEp 1 finale\tinput-slave=https://cdn/a.m4a"
+        );
+        let bad = Command::Load {
+            uri: "https://cdn/v.mp4".into(),
+            audio_languages: String::new(),
+            subtitle_languages: String::new(),
+            title: String::new(),
+            options: vec!["a=1\tquit".into()],
+        };
+        assert!(matches!(bad.encode(), Err(WireError::BadField(_))));
     }
 
     #[test]

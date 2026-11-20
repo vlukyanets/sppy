@@ -26,7 +26,8 @@ sppy drives a separately installed player: [mpv](https://mpv.io) (the default) o
 - VLC on Windows: the regular installer; sppy finds it in `Program Files`.
 - Linux: install `mpv` or `vlc` from your distribution.
 
-With mpv, [yt-dlp](https://github.com/yt-dlp/yt-dlp) is needed for web links in the playlist.
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is needed for web links in the playlist (YouTube and
+other sites), with either player.
 
 ### VLC
 
@@ -35,7 +36,9 @@ into VLC's Lua folder (`~/.local/share/vlc/lua/intf` on Linux,
 `%APPDATA%\vlc\lua\intf` on Windows) and starts VLC with it. The module talks to sppy
 over a local connection only. Compared with mpv:
 
-- VLC opens web links with its own scripts, not yt-dlp, so fewer sites work.
+- Web links go through yt-dlp first, as with mpv (video and audio that a site serves
+  separately are played together). Without yt-dlp, VLC tries its own scripts, which know
+  fewer sites.
 - VLC cannot tell how much it has buffered ahead, so a streamed item counts as ready as
   soon as VLC has opened it.
 - At the end of an item VLC's window goes black instead of keeping the last frame.

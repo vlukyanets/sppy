@@ -11,11 +11,14 @@ pub mod fake;
 use std::future::Future;
 use std::path::PathBuf;
 
-/// What to open: a local file or a URL (server media URL or any URL mpv/yt-dlp can open).
+/// What to open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaSource {
     Path(PathBuf),
+    /// A media URL to open as it is (the server's files and subtitles).
     Url(String),
+    /// A link someone added: often a page that yt-dlp turns into the media URLs.
+    Link(String),
 }
 
 /// Optional features a backend supports.

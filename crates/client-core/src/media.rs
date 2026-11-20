@@ -159,7 +159,7 @@ pub fn stream_source(base: &str, item: &Item, session_token: &str) -> Resolved {
             Resolved::Rejected { reason: format!("Only http(s) links can be played: {url}") }
         }
         Source::Url { url } => Resolved::Stream {
-            media: MediaSource::Url(url.trim().to_owned()),
+            media: MediaSource::Link(url.trim().to_owned()),
             subtitles: Vec::new(),
         },
     }
@@ -201,13 +201,15 @@ mod tests {
         );
     }
 
+    /// A link someone added is a `Link`, which the player may resolve with yt-dlp; the
+    /// server's own files stay plain URLs.
     #[test]
     fn url_item_streams_directly() {
         let r =
             stream_source("http://h:1", &item(Source::Url { url: "https://y/v".into() }, 0), "t");
         assert_eq!(
             r,
-            Resolved::Stream { media: MediaSource::Url("https://y/v".into()), subtitles: vec![] }
+            Resolved::Stream { media: MediaSource::Link("https://y/v".into()), subtitles: vec![] }
         );
     }
 
@@ -218,7 +220,7 @@ mod tests {
         let i = item(Source::Url { url: " \thttps://y/v \n".into() }, 0);
         assert_eq!(
             stream_source("http://h:1", &i, "t"),
-            Resolved::Stream { media: MediaSource::Url("https://y/v".into()), subtitles: vec![] }
+            Resolved::Stream { media: MediaSource::Link("https://y/v".into()), subtitles: vec![] }
         );
     }
 

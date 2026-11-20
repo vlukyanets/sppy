@@ -20,7 +20,7 @@ async fn single_client_follows_server() {
     assert!(
         h.remote()
             .commands()
-            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u1".into())))
+            .contains(&FakeCmd::Load(MediaSource::Link("https://example.invalid/u1".into())))
     );
     eventually("in sync", 5, || h.synced()).await;
     server.shutdown().await;
@@ -115,7 +115,7 @@ async fn item_end_advances_both() {
     let loaded_u2 = |p: &Peer| {
         p.remote()
             .commands()
-            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u2".into())))
+            .contains(&FakeCmd::Load(MediaSource::Link("https://example.invalid/u2".into())))
     };
     eventually("both on item 2", 8, || loaded_u2(&a) && loaded_u2(&b)).await;
     // Item 2 is short and may already have ended: check that it started (hold released).
@@ -137,7 +137,7 @@ async fn player_crash_restarts_once() {
     eventually("reloaded", 3, || {
         a.remote()
             .commands()
-            .contains(&FakeCmd::Load(MediaSource::Url("https://example.invalid/u1".into())))
+            .contains(&FakeCmd::Load(MediaSource::Link("https://example.invalid/u1".into())))
     })
     .await;
     eventually("in sync", 5, || a.synced()).await;

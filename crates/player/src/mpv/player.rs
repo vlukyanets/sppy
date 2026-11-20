@@ -106,7 +106,8 @@ pub struct MpvPlayer {
 /// UTF-8-named symlink next to the IPC sockets (Unix); the link is kept until the next load.
 fn source_arg(src: &MediaSource, links: &mut Vec<PathBuf>) -> PlayerResult<String> {
     match src {
-        MediaSource::Url(u) => Ok(u.clone()),
+        // mpv runs yt-dlp for links by itself (ytdl_hook).
+        MediaSource::Url(u) | MediaSource::Link(u) => Ok(u.clone()),
         MediaSource::Path(p) => match p.to_str() {
             Some(s) => Ok(s.to_owned()),
             None => utf8_alias(p, links),

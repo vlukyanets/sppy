@@ -11,7 +11,7 @@ Every number on the wire is an integer (time in microseconds, rate in millionths
 VLC applies the system locale, under which Lua reads and prints fractions with a comma.
 ]]
 
-local VERSION = "1"
+local VERSION = "2"
 
 local function int(x)
   return math.floor((x or 0) + 0.5)
@@ -55,11 +55,15 @@ local function run(f)
   if cmd == "status" then
     return status()
   elseif cmd == "load" then
+    -- load <uri> <audio languages> <subtitle languages> <title> [<name=value> ...]
     local options = { "start-paused" }
     if f[3] and f[3] ~= "" then table.insert(options, "audio-language=" .. f[3]) end
     if f[4] and f[4] ~= "" then table.insert(options, "sub-language=" .. f[4]) end
+    for i = 6, #f do table.insert(options, f[i]) end
+    local item = { path = f[2], options = options }
+    if f[5] and f[5] ~= "" then item.name = f[5] end
     vlc.playlist.clear()
-    vlc.playlist.add({ { path = f[2], options = options } })
+    vlc.playlist.add({ item })
   elseif cmd == "sub" then
     if not input then return "error\tnothing is open" end
     vlc.input.add_subtitle_mrl(f[2])
@@ -82,6 +86,8 @@ local function run(f)
     if osd_channel then
       pcall(vlc.osd.message, f[3] or "", osd_channel, "top-left", tonumber(f[2]))
     end
+  elseif cmd == "clear" then
+    vlc.playlist.clear()
   elseif cmd == "quit" then
     vlc.misc.quit()
   else

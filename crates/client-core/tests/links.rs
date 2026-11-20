@@ -16,7 +16,7 @@ const LINK: &str = "https://videos.example.net/a.mp4";
 fn loaded(p: &Peer, url: &str) -> bool {
     p.launcher
         .remote()
-        .is_some_and(|r| r.commands().contains(&FakeCmd::Load(MediaSource::Url(url.into()))))
+        .is_some_and(|r| r.commands().contains(&FakeCmd::Load(MediaSource::Link(url.into()))))
 }
 
 fn my_status(p: &Peer) -> Option<MediaStatus> {

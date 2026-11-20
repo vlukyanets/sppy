@@ -55,7 +55,12 @@ struct Restore {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Idle,
-    Loading { since_ms: u64, restore: Option<Restore> },
+    /// yt-dlp is finding the media of a link; VLC has nothing to open yet.
+    Resolving,
+    Loading {
+        since_ms: u64,
+        restore: Option<Restore>,
+    },
     Open,
     Ended,
     Failed,
@@ -119,6 +124,18 @@ impl Tracker {
         Self::default()
     }
 
+    /// A link is being resolved before VLC gets it.
+    pub fn resolving(&mut self) {
+        let requested_speed = self.requested_speed;
+        *self = Tracker { phase: Phase::Resolving, requested_speed, ..Tracker::default() };
+    }
+
+    /// The item cannot be played, for the given reason.
+    pub fn fail(&mut self, message: String) -> Vec<Action> {
+        self.phase = Phase::Failed;
+        vec![Action::Event(PlayerEvent::LoadFailed { message })]
+    }
+
     /// A new item was sent to VLC.
     pub fn load_sent(&mut self, now_ms: u64) {
         let requested_speed = self.requested_speed;
@@ -173,7 +190,7 @@ impl Tracker {
             Some(s) => match s.state {
                 InputState::Ended => self.input_gone(now_ms),
                 InputState::Error => match self.phase {
-                    Phase::Loading { .. } => self.fail(),
+                    Phase::Loading { .. } => self.fail("VLC could not open the media".into()),
                     _ => self.input_gone(now_ms),
                 },
                 InputState::Opening => Vec::new(),
@@ -182,19 +199,12 @@ impl Tracker {
         }
     }
 
-    fn fail(&mut self) -> Vec<Action> {
-        self.phase = Phase::Failed;
-        vec![Action::Event(PlayerEvent::LoadFailed {
-            message: "VLC could not open the media".into(),
-        })]
-    }
-
     fn input_gone(&mut self, now_ms: u64) -> Vec<Action> {
         match self.phase {
-            Phase::Idle | Phase::Ended | Phase::Failed => Vec::new(),
+            Phase::Idle | Phase::Resolving | Phase::Ended | Phase::Failed => Vec::new(),
             Phase::Loading { since_ms, .. } => {
                 if now_ms.saturating_sub(since_ms) >= LOAD_FAIL_MS {
-                    self.fail()
+                    self.fail("VLC could not open the media".into())
                 } else {
                     Vec::new()
                 }
@@ -247,7 +257,7 @@ impl Tracker {
         let length_ms = (s.length_us > 0).then_some(s.length_us / 1000);
         let mut out = Vec::new();
         match self.phase {
-            Phase::Idle | Phase::Ended | Phase::Failed => return out,
+            Phase::Idle | Phase::Resolving | Phase::Ended | Phase::Failed => return out,
             Phase::Loading { restore, .. } => {
                 self.phase = Phase::Open;
                 self.paused = s.state == InputState::Paused;
@@ -530,6 +540,29 @@ mod tests {
             events(t.observe(2200, Some(&s))),
             vec![PlayerEvent::Speed(1.5), PlayerEvent::TimePos(205)]
         );
+    }
+
+    #[test]
+    fn a_link_being_resolved_is_no_load_failure_yet() {
+        let mut t = Tracker::new();
+        t.resolving();
+        assert_eq!(t.observe(10_000, None), vec![]);
+        t.load_sent(10_000);
+        assert!(matches!(
+            events(t.observe(10_050, Some(&paused(0))))[..],
+            [PlayerEvent::FileLoaded { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_link_that_cannot_be_resolved_fails_with_the_reason() {
+        let mut t = Tracker::new();
+        t.resolving();
+        assert_eq!(
+            events(t.fail("yt-dlp: Video unavailable".into())),
+            vec![PlayerEvent::LoadFailed { message: "yt-dlp: Video unavailable".into() }]
+        );
+        assert_eq!(t.observe(5000, None), vec![]);
     }
 
     #[test]
