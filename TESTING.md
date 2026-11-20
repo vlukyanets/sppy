@@ -125,6 +125,11 @@ Run each instance with its own home so they do not share config and cache:
 4. A (host) → **Wait for latecomers**. Freeze B's player for 2 s → A's player jumps back
    about 2 s with "Went back 2.0 s for B" on its OSD; B does not jump. Back to
    **Latecomers catch up alone** → the same freeze makes B catch up and A plays on.
+5. A (host) ticks **Start on Ready**, then selects another item. Both players load it and
+   show "Now playing: … Press Ready in sppy"; the waiting line names both as "not ready"
+   and has **I'm ready**. A presses it → A's OSD stays, B's shows "A is ready", the list
+   shows A as ready; B presses it → playback starts. **Not ready** takes it back.
+   Unticked → the next item starts as soon as both have loaded it.
 
 ## Manual: VLC
 

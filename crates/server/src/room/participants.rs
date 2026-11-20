@@ -52,6 +52,7 @@ impl Room {
                 can_control: false,
                 connected: true,
                 status: MediaStatus::Loading,
+                ready: false,
             },
             session_token: req.session_token,
             disconnected_at: None,

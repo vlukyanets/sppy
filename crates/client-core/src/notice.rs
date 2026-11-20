@@ -34,7 +34,8 @@ pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
         NoticeAction::Paused
         | NoticeAction::Resumed
         | NoticeAction::Seeked { .. }
-        | NoticeAction::SpeedChanged { .. } => !actor_is_me,
+        | NoticeAction::SpeedChanged { .. }
+        | NoticeAction::ReadyChanged { .. } => !actor_is_me,
         NoticeAction::ItemChanged { .. }
         | NoticeAction::HoldStarted { .. }
         | NoticeAction::HoldEnded
@@ -48,6 +49,7 @@ pub fn osd_worthy(action: &NoticeAction, actor_is_me: bool) -> bool {
         | NoticeAction::Left
         | NoticeAction::ControlModeChanged { .. }
         | NoticeAction::LagPolicyChanged { .. }
+        | NoticeAction::ReadyCheckChanged { .. }
         | NoticeAction::CanControlChanged { .. }
         | NoticeAction::DeliveryFellBack { .. } => false,
     }
@@ -60,24 +62,31 @@ pub fn waiting_line(
     progress: &std::collections::HashMap<ParticipantId, sppy_proto::ProgressEntry>,
     me: Option<ParticipantId>,
 ) -> String {
-    use sppy_proto::{Delivery, MediaStatus};
-    let parts: Vec<String> = hold
-        .waiting_for
-        .iter()
-        .map(|pid| {
-            let name = if Some(*pid) == me { "you".to_owned() } else { nickname(room, *pid) };
-            let status = room.participants.iter().find(|p| p.id == *pid).map(|p| &p.status);
-            let detail = match (status, progress.get(pid).map(|e| &e.delivery)) {
-                (_, Some(Delivery::Download { bytes, total })) if *total > 0 && bytes < total => {
-                    format!("downloading {}%", bytes * 100 / total)
-                }
-                (Some(MediaStatus::Stalled), _) => "buffering".into(),
-                (Some(MediaStatus::Loading), _) => "loading".into(),
-                _ => String::new(),
-            };
-            if detail.is_empty() { name } else { format!("{name} ({detail})") }
-        })
-        .collect();
+    use sppy_proto::{Delivery, HoldReason, MediaStatus};
+    let wants_ready = room.ready_check && hold.reason == HoldReason::ItemStart;
+    let line = |pid: &ParticipantId| {
+        let name = if Some(*pid) == me { "you".to_owned() } else { nickname(room, *pid) };
+        let p = room.participants.iter().find(|p| p.id == *pid);
+        let detail = match (p.map(|p| &p.status), progress.get(pid).map(|e| &e.delivery)) {
+            (_, Some(Delivery::Download { bytes, total })) if *total > 0 && bytes < total => {
+                format!("downloading {}%", bytes * 100 / total)
+            }
+            (Some(MediaStatus::Stalled), _) => "buffering".into(),
+            (Some(MediaStatus::Loading), _) => "loading".into(),
+            _ if wants_ready && p.is_some_and(|p| !p.ready) => "not ready".into(),
+            _ => String::new(),
+        };
+        (detail.is_empty(), if detail.is_empty() { name } else { format!("{name} ({detail})") })
+    };
+    let all: Vec<(bool, String)> = hold.waiting_for.iter().map(line).collect();
+    // Only those the room still waits for; everyone if that leaves nobody.
+    let blocking: Vec<&str> =
+        all.iter().filter(|(done, _)| !done).map(|(_, text)| text.as_str()).collect();
+    let parts: Vec<&str> = if blocking.is_empty() {
+        all.iter().map(|(_, text)| text.as_str()).collect()
+    } else {
+        blocking
+    };
     format!("Waiting for: {}", parts.join(", "))
 }
 
@@ -88,6 +97,9 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
         NoticeAction::Resumed => format!("{who} resumed"),
         NoticeAction::Seeked { to_ms } => format!("{who} jumped to {}", fmt_time(*to_ms)),
         NoticeAction::SpeedChanged { speed } => format!("{who} set speed to {speed}×"),
+        NoticeAction::ItemChanged { item_id } if room.ready_check => {
+            format!("Now playing: {}. Press Ready in sppy", title(room, *item_id))
+        }
         NoticeAction::ItemChanged { item_id } => format!("Now playing: {}", title(room, *item_id)),
         NoticeAction::PlaylistAdded { item_ids } => match item_ids.len() {
             1 => format!("{who} added {}", title(room, item_ids[0])),
@@ -114,6 +126,14 @@ pub fn render_notice(actor: Option<&str>, action: &NoticeAction, room: &RoomStat
             *back_ms as f64 / 1000.0,
             nickname(room, *participant_id)
         ),
+        NoticeAction::ReadyChanged { ready: true } => format!("{who} is ready"),
+        NoticeAction::ReadyChanged { ready: false } => format!("{who} is not ready"),
+        NoticeAction::ReadyCheckChanged { on: true } => {
+            "New items now start once everyone has pressed Ready".into()
+        }
+        NoticeAction::ReadyCheckChanged { on: false } => {
+            "New items now start once everyone has loaded them".into()
+        }
         NoticeAction::CanControlChanged { participant_id, allowed } => {
             let n = nickname(room, *participant_id);
             if *allowed {
@@ -217,6 +237,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ready_notices_say_who_and_what_to_do() {
+        let mut r = room();
+        let ready = NoticeAction::ReadyChanged { ready: true };
+        assert_eq!(render_notice(Some("bob"), &ready, &r), "bob is ready");
+        let not = NoticeAction::ReadyChanged { ready: false };
+        assert_eq!(render_notice(Some("bob"), &not, &r), "bob is not ready");
+        assert!(osd_worthy(&ready, false) && !osd_worthy(&ready, true));
+        let on = NoticeAction::ReadyCheckChanged { on: true };
+        assert_eq!(
+            render_notice(Some("alice"), &on, &r),
+            "New items now start once everyone has pressed Ready"
+        );
+        let off = NoticeAction::ReadyCheckChanged { on: false };
+        assert_eq!(
+            render_notice(Some("alice"), &off, &r),
+            "New items now start once everyone has loaded them"
+        );
+        assert!(!osd_worthy(&on, false));
+        let changed = NoticeAction::ItemChanged { item_id: ItemId(5) };
+        assert_eq!(render_notice(None, &changed, &r), "Now playing: Movie");
+        r.ready_check = true;
+        assert_eq!(render_notice(None, &changed, &r), "Now playing: Movie. Press Ready in sppy");
+    }
+
+    #[test]
+    fn the_wait_names_who_has_not_pressed_ready() {
+        let mut r = room();
+        r.ready_check = true;
+        r.participants[0].status = MediaStatus::Ready { duration_ms: None, title: None };
+        r.participants[1].status = MediaStatus::Ready { duration_ms: None, title: None };
+        r.participants[1].ready = true;
+        let hold = Hold {
+            reason: HoldReason::ItemStart,
+            waiting_for: vec![ParticipantId(1), ParticipantId(2)],
+        };
+        let line = waiting_line(&hold, &r, &Default::default(), Some(ParticipantId(2)));
+        assert_eq!(line, "Waiting for: alice (not ready)");
+    }
+
     fn room() -> RoomState {
         let p = |id, nick: &str| Participant {
             id: ParticipantId(id),
@@ -225,12 +285,14 @@ mod tests {
             can_control: false,
             connected: true,
             status: MediaStatus::Loading,
+            ready: false,
         };
         RoomState {
             room_id: RoomId::main(),
             participants: vec![p(1, "alice"), p(2, "bob")],
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
+            ready_check: false,
             playlist: vec![Item {
                 item_id: ItemId(5),
                 source: Source::Url { url: "u".into() },
@@ -333,6 +395,7 @@ mod v2_tests {
             can_control: false,
             connected: true,
             status,
+            ready: false,
         };
         RoomState {
             room_id: RoomId::main(),
@@ -343,6 +406,7 @@ mod v2_tests {
             ],
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
+            ready_check: false,
             playlist: vec![],
             settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
         }

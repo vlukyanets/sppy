@@ -37,9 +37,25 @@ pub fn sync_text(drift_ms: i64, dead_band_ms: u64) -> (String, egui::Color32) {
     (text, color)
 }
 
+/// Whether someone pressed Ready, shown only while it matters: the room's ready check is
+/// on and a new item waits to start.
+pub fn ready_pill(waits_for_ready: bool, ready: bool) -> Option<(&'static str, egui::Color32)> {
+    match (waits_for_ready, ready) {
+        (false, _) => None,
+        (true, true) => Some(("ready", GREEN)),
+        (true, false) => Some(("not ready", theme::MUTED)),
+    }
+}
+
 pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     let Some(room) = &snap.room else { return };
     let playing = snap.playback.as_ref().is_some_and(|p| p.is_playing());
+    let waits_for_ready = room.ready_check
+        && snap
+            .playback
+            .as_ref()
+            .and_then(|p| p.hold.as_ref())
+            .is_some_and(|h| h.reason == sppy_proto::HoldReason::ItemStart);
     for p in &room.participants {
         let id = ui.scope_id().with(("participant", p.id));
         theme::row(ui, id, false, |ui, _| {
@@ -90,6 +106,9 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
                     let pill = theme::pill(ui, status, color);
                     if let Some(details) = details {
                         pill.on_hover_text(details);
+                    }
+                    if let Some((text, color)) = ready_pill(waits_for_ready, p.ready) {
+                        theme::pill(ui, text, color);
                     }
                     let entry = snap.progress.get(&p.id);
                     match entry.map(|e| &e.delivery) {
@@ -160,5 +179,12 @@ mod tests {
         assert_eq!(sync_text(-90, 100), ("-90 ms".into(), GREEN));
         assert_eq!(sync_text(120, 100), ("+120 ms".into(), YELLOW));
         assert_eq!(sync_text(-2_500, 100), ("-2.5 s".into(), RED));
+    }
+
+    #[test]
+    fn ready_shows_only_while_the_start_waits_for_it() {
+        assert_eq!(ready_pill(false, true), None);
+        assert_eq!(ready_pill(true, true), Some(("ready", GREEN)));
+        assert_eq!(ready_pill(true, false), Some(("not ready", theme::MUTED)));
     }
 }

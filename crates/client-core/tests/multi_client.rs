@@ -137,3 +137,28 @@ async fn slow_seeking_player_does_not_move_the_room() {
     assert_eq!(seeks.len(), 1, "only the host's seek: {seeks:?}");
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn with_the_ready_check_the_start_waits_for_everyone_to_press_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    let a = host(&server, FakeConfig::default()).await;
+    let b = guest(&server, "bob", FakeConfig::default()).await;
+    a.send(UiCommand::SetReadyCheck(true));
+    eventually("the check is on for b", 5, || snap(&b.handle).room.is_some_and(|r| r.ready_check))
+        .await;
+    a.send(UiCommand::PlaylistAdd(vec![url("u1")]));
+    a.send(UiCommand::Play);
+    eventually("both loaded", 5, || {
+        snap(&a.handle).room.is_some_and(|r| {
+            r.participants.iter().all(|p| matches!(p.status, sppy_proto::MediaStatus::Ready { .. }))
+        })
+    })
+    .await;
+    a.send(UiCommand::SetReady(true));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!is_playing(&a), "b has not pressed Ready");
+    b.send(UiCommand::SetReady(true));
+    eventually("the room started", 5, || is_playing(&a) && is_playing(&b)).await;
+    server.shutdown().await;
+}

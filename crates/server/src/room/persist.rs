@@ -18,6 +18,8 @@ pub struct PersistedState {
     /// Missing in files written before it existed.
     #[serde(default)]
     pub lag_policy: LagPolicy,
+    #[serde(default)]
+    pub ready_check: bool,
 }
 
 impl Room {
@@ -30,6 +32,7 @@ impl Room {
             position_ms: self.playback.expected_position_ms(now_ms),
             control_mode: self.control_mode,
             lag_policy: self.lag_policy,
+            ready_check: self.ready_check,
         }
     }
 
@@ -41,6 +44,7 @@ impl Room {
         room.next_item_id = state.next_item_id;
         room.control_mode = state.control_mode;
         room.lag_policy = state.lag_policy;
+        room.ready_check = state.ready_check;
         room.playback.item_id = current;
         room.playback.position_ms = if current.is_some() { state.position_ms } else { 0 };
         room.playback.paused = true;

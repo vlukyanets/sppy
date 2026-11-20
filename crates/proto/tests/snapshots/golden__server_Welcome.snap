@@ -20,11 +20,13 @@ expression: msg
         "status": {
           "kind": "Ready",
           "duration_ms": 5400000
-        }
+        },
+        "ready": true
       }
     ],
     "control_mode": "Selected",
     "lag_policy": "CatchUpAlone",
+    "ready_check": true,
     "playlist": [
       {
         "item_id": 3,

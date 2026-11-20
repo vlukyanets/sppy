@@ -54,6 +54,27 @@ impl Room {
         ]
     }
 
+    pub(super) fn set_ready_check(
+        &mut self,
+        now_ms: u64,
+        pid: ParticipantId,
+        req_id: ReqId,
+        on: bool,
+    ) -> Vec<Effect> {
+        if !self.is_host(pid) {
+            return self.denied(pid, req_id, ErrorCode::NotHost);
+        }
+        self.ready_check = on;
+        let mut effects = vec![
+            self.broadcast_room(),
+            Self::notice(Some(pid), NoticeAction::ReadyCheckChanged { on }),
+            Effect::Persist,
+        ];
+        // Turned off, a start that waited only for Ready can go.
+        effects.extend(self.reevaluate_hold(now_ms));
+        effects
+    }
+
     pub(super) fn set_can_control(
         &mut self,
         pid: ParticipantId,

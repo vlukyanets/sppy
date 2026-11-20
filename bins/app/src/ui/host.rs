@@ -60,6 +60,17 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
         if policy != room.lag_policy {
             app.send(UiCommand::SetLagPolicy(policy));
         }
+        let mut check = room.ready_check;
+        if ui
+            .checkbox(&mut check, "Start on Ready")
+            .on_hover_text(
+                "A new item starts once everyone has loaded it and pressed Ready, not as soon \
+                 as it has loaded.",
+            )
+            .changed()
+        {
+            app.send(UiCommand::SetReadyCheck(check));
+        }
         if ui.button("Rotate invite").on_hover_text("Old invite links stop working").clicked() {
             app.send(UiCommand::RotateInvite);
         }

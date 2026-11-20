@@ -22,9 +22,11 @@ fn room() -> RoomState {
             can_control: true,
             connected: true,
             status: MediaStatus::Ready { duration_ms: Some(5_400_000), title: None },
+            ready: true,
         }],
         control_mode: ControlMode::Selected,
         lag_policy: LagPolicy::default(),
+        ready_check: true,
         playlist: vec![item()],
         settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
     }
@@ -114,6 +116,8 @@ fn client_samples() -> Vec<(&'static str, ClientMsg)> {
         ("GetLibrary", ClientMsg::GetLibrary),
         ("SetControlMode", ClientMsg::SetControlMode { req_id: 9, mode: ControlMode::HostOnly }),
         ("SetLagPolicy", ClientMsg::SetLagPolicy { req_id: 11, policy: LagPolicy::FollowSlowest }),
+        ("SetReadyCheck", ClientMsg::SetReadyCheck { req_id: 12, on: true }),
+        ("SetReady", ClientMsg::SetReady { ready: true }),
         (
             "SetCanControl",
             ClientMsg::SetCanControl {
@@ -189,6 +193,20 @@ fn server_samples() -> Vec<(&'static str, ServerMsg)> {
                     participant_id: ParticipantId(2),
                     back_ms: 1_500,
                 },
+            }),
+        ),
+        (
+            "EventNoticeReadyChanged",
+            ServerMsg::Event(Event::Notice {
+                actor: Some(ParticipantId(2)),
+                action: NoticeAction::ReadyChanged { ready: true },
+            }),
+        ),
+        (
+            "EventNoticeReadyCheckChanged",
+            ServerMsg::Event(Event::Notice {
+                actor: Some(ParticipantId(1)),
+                action: NoticeAction::ReadyCheckChanged { on: true },
             }),
         ),
         (

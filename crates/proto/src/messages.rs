@@ -89,6 +89,10 @@ pub enum ClientMsg {
     Chat {
         text: String,
     },
+    /// Ready (or no longer) for the current item to start.
+    SetReady {
+        ready: bool,
+    },
     GetLibrary,
     SetControlMode {
         req_id: ReqId,
@@ -98,6 +102,11 @@ pub enum ClientMsg {
     SetLagPolicy {
         req_id: ReqId,
         policy: LagPolicy,
+    },
+    /// Host: whether a new item also waits for everyone to press Ready.
+    SetReadyCheck {
+        req_id: ReqId,
+        on: bool,
     },
     SetCanControl {
         req_id: ReqId,
@@ -148,6 +157,7 @@ impl ClientMsg {
             | PlaylistSelect { req_id, .. }
             | SetControlMode { req_id, .. }
             | SetLagPolicy { req_id, .. }
+            | SetReadyCheck { req_id, .. }
             | SetCanControl { req_id, .. }
             | Kick { req_id, .. }
             | RotateInvite { req_id }
@@ -162,6 +172,7 @@ impl ClientMsg {
             | Progress { .. }
             | ItemEnded { .. }
             | Chat { .. }
+            | SetReady { .. }
             | GetLibrary => None,
         }
     }

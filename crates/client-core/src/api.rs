@@ -42,6 +42,10 @@ pub enum UiCommand {
     SetControlMode(ControlMode),
     /// Host: what the room does about participants who fall behind.
     SetLagPolicy(sppy_proto::LagPolicy),
+    /// Host: whether a new item also waits for everyone to press Ready.
+    SetReadyCheck(bool),
+    /// Ready (or no longer) for the current item to start.
+    SetReady(bool),
     SetCanControl(ParticipantId, bool),
     Kick(ParticipantId),
     RotateInvite,
@@ -221,9 +225,11 @@ mod tests {
                     can_control,
                     connected: true,
                     status: MediaStatus::Loading,
+                    ready: false,
                 }],
                 control_mode: mode,
                 lag_policy: sppy_proto::LagPolicy::default(),
+                ready_check: false,
                 playlist: vec![],
                 settings: RoomSettings { stall_hold_secs: 10, resume_buffer_secs: 10 },
             }),

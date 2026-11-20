@@ -73,14 +73,38 @@ impl Room {
         effects
     }
 
+    /// Pressed Ready, or took it back. Only the start of an item waits for it (with the
+    /// room's ready check on).
+    pub(super) fn set_ready(
+        &mut self,
+        now_ms: u64,
+        pid: ParticipantId,
+        ready: bool,
+    ) -> Vec<Effect> {
+        let Some(m) = self.member_mut(pid) else { return Vec::new() };
+        if m.info.ready == ready {
+            return Vec::new();
+        }
+        m.info.ready = ready;
+        let mut effects = vec![
+            self.broadcast_room(),
+            Self::notice(Some(pid), NoticeAction::ReadyChanged { ready }),
+        ];
+        effects.extend(self.reevaluate_hold(now_ms));
+        effects
+    }
+
     /// Release the hold once everyone it waits for is ready or inactive.
     pub(super) fn reevaluate_hold(&mut self, now_ms: u64) -> Vec<Effect> {
         let Some(hold) = &self.playback.hold else {
             return Vec::new();
         };
+        let wants_ready = self.ready_check && hold.reason == HoldReason::ItemStart;
         let still_waiting = hold.waiting_for.iter().any(|pid| {
             self.member(*pid).is_some_and(|m| {
-                self.is_active(m.info.id) && !matches!(m.info.status, MediaStatus::Ready { .. })
+                self.is_active(m.info.id)
+                    && (!matches!(m.info.status, MediaStatus::Ready { .. })
+                        || (wants_ready && !m.info.ready))
             })
         });
         if still_waiting {

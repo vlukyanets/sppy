@@ -85,6 +85,7 @@ fn participant(id: u64) -> Participant {
         can_control: true,
         connected: true,
         status: MediaStatus::Loading,
+        ready: false,
     }
 }
 
@@ -106,6 +107,7 @@ fn room(playlist: Vec<Item>) -> RoomState {
         participants: vec![participant(1), participant(1), participant(u64::MAX)],
         control_mode: ControlMode::Everyone,
         lag_policy: LagPolicy::default(),
+        ready_check: true,
         playlist,
         settings: RoomSettings { stall_hold_secs: u32::MAX, resume_buffer_secs: u32::MAX },
     }

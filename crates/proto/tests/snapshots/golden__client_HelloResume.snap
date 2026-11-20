@@ -4,7 +4,7 @@ expression: msg
 ---
 {
   "type": "Hello",
-  "protocol": 5,
+  "protocol": 6,
   "room": "main",
   "auth": {
     "kind": "Resume",

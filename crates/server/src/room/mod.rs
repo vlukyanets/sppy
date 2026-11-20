@@ -63,6 +63,8 @@ pub struct Room {
     next_participant_id: u64,
     control_mode: ControlMode,
     lag_policy: LagPolicy,
+    /// A new item also waits for everyone to press Ready.
+    ready_check: bool,
     playlist: Vec<Item>,
     next_item_id: u64,
     catalog: HashMap<FileId, FileInfo>,
@@ -84,6 +86,7 @@ impl Room {
             next_participant_id: 1,
             control_mode: ControlMode::Everyone,
             lag_policy: LagPolicy::default(),
+            ready_check: false,
             playlist: Vec::new(),
             next_item_id: 1,
             catalog: HashMap::new(),
@@ -113,6 +116,7 @@ impl Room {
             participants: self.members.iter().map(|m| m.info.clone()).collect(),
             control_mode: self.control_mode,
             lag_policy: self.lag_policy,
+            ready_check: self.ready_check,
             playlist: self.playlist.clone(),
             settings: self.config.settings,
         }
@@ -186,6 +190,10 @@ impl Room {
             ClientMsg::Chat { text } => self.chat(now_ms, pid, text),
             ClientMsg::SetControlMode { req_id, mode } => self.set_control_mode(pid, req_id, mode),
             ClientMsg::SetLagPolicy { req_id, policy } => self.set_lag_policy(pid, req_id, policy),
+            ClientMsg::SetReadyCheck { req_id, on } => {
+                self.set_ready_check(now_ms, pid, req_id, on)
+            }
+            ClientMsg::SetReady { ready } => self.set_ready(now_ms, pid, ready),
             ClientMsg::SetCanControl { req_id, participant_id, allowed } => {
                 self.set_can_control(pid, req_id, participant_id, allowed)
             }

@@ -315,6 +315,10 @@ impl<L: PlayerLauncher> Session<L> {
             UiCommand::SetLagPolicy(policy) => {
                 self.request(|req_id| ClientMsg::SetLagPolicy { req_id, policy });
             }
+            UiCommand::SetReadyCheck(on) => {
+                self.request(|req_id| ClientMsg::SetReadyCheck { req_id, on });
+            }
+            UiCommand::SetReady(ready) => self.send(ClientMsg::SetReady { ready }),
             UiCommand::SetControlMode(mode) => {
                 self.request(|req_id| ClientMsg::SetControlMode { req_id, mode });
             }

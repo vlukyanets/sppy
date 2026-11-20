@@ -1628,3 +1628,153 @@ mod lag_policy {
         assert_eq!(restored.state().lag_policy, LagPolicy::FollowSlowest);
     }
 }
+
+mod ready_check {
+    use super::*;
+
+    fn ready_check(r: &mut Room, h: ParticipantId, on: bool) -> Vec<Effect> {
+        r.command(0, h, ClientMsg::SetReadyCheck { req_id: 7, on })
+    }
+
+    fn press_ready(r: &mut Room, now: u64, pid: ParticipantId, ready: bool) -> Vec<Effect> {
+        r.command(now, pid, ClientMsg::SetReady { ready })
+    }
+
+    /// Host and guest in a room with the check on; item 1 just started (waiting).
+    fn starting_room() -> (Room, ParticipantId, ParticipantId) {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        ready_check(&mut r, h, true);
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        (r, h, g)
+    }
+
+    fn is_ready(r: &Room, pid: ParticipantId) -> bool {
+        participant(r, pid).unwrap().ready
+    }
+
+    #[test]
+    fn only_the_host_turns_it_on_and_everyone_hears() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        let msg = |req_id| ClientMsg::SetReadyCheck { req_id, on: true };
+        assert_denied(&r.command(0, g, msg(5)), g, 5, ErrorCode::NotHost);
+        assert!(!r.state().ready_check, "off by default");
+        let effects = r.command(0, h, msg(6));
+        assert!(r.state().ready_check);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::Broadcast { msg: ServerMsg::Room(s) } if s.ready_check
+        )));
+        assert!(has_notice(&effects, |a| *a == NoticeAction::ReadyCheckChanged { on: true }));
+        assert!(effects.contains(&Effect::Persist));
+    }
+
+    #[test]
+    fn the_start_waits_for_everyone_to_press_ready() {
+        let (mut r, h, g) = starting_room();
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().hold.is_some(), "loaded is not enough");
+        let effects = press_ready(&mut r, 100, h, true);
+        assert!(is_ready(&r, h));
+        assert!(has_notice(&effects, |a| *a == NoticeAction::ReadyChanged { ready: true }));
+        assert!(r.playback().hold.is_some(), "the guest has not pressed it");
+        press_ready(&mut r, 200, g, true);
+        assert!(r.playback().is_playing(), "{:?}", r.playback());
+    }
+
+    #[test]
+    fn pressing_ready_before_the_file_loaded_still_waits_for_the_file() {
+        let (mut r, h, g) = starting_room();
+        press_ready(&mut r, 0, h, true);
+        press_ready(&mut r, 0, g, true);
+        status(&mut r, 0, h, 1, ready());
+        assert!(r.playback().hold.is_some());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().is_playing());
+    }
+
+    #[test]
+    fn taking_ready_back_keeps_the_room_waiting() {
+        let (mut r, h, g) = starting_room();
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        press_ready(&mut r, 0, h, true);
+        press_ready(&mut r, 0, h, false);
+        press_ready(&mut r, 0, g, true);
+        assert!(r.playback().hold.is_some());
+        assert!(!is_ready(&r, h));
+    }
+
+    #[test]
+    fn ready_is_reset_for_every_new_item() {
+        let (mut r, h, g) = starting_room();
+        add(&mut r, 0, h, vec![Source::Url { url: "https://b".into() }], None);
+        for p in [h, g] {
+            status(&mut r, 0, p, 1, ready());
+            press_ready(&mut r, 0, p, true);
+        }
+        assert!(r.playback().is_playing());
+        r.command(1_000, h, ClientMsg::PlaylistSelect { req_id: 3, item_id: ItemId(2) });
+        assert!(!is_ready(&r, h) && !is_ready(&r, g));
+        for p in [h, g] {
+            status(&mut r, 1_000, p, 2, ready());
+        }
+        assert!(r.playback().hold.is_some(), "waits for Ready again");
+    }
+
+    #[test]
+    fn turning_it_off_releases_a_room_waiting_only_for_ready() {
+        let (mut r, h, g) = starting_room();
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().hold.is_some());
+        ready_check(&mut r, h, false);
+        assert!(r.playback().is_playing());
+    }
+
+    #[test]
+    fn without_the_check_ready_changes_nothing() {
+        let mut r = room();
+        let h = host(&mut r);
+        let g = join(&mut r, "guest");
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        status(&mut r, 0, h, 1, ready());
+        status(&mut r, 0, g, 1, ready());
+        assert!(r.playback().is_playing());
+    }
+
+    #[test]
+    fn a_stall_hold_does_not_wait_for_ready() {
+        let (mut r, h, g) = starting_room();
+        for p in [h, g] {
+            status(&mut r, 0, p, 1, ready());
+            press_ready(&mut r, 0, p, true);
+        }
+        status(&mut r, 1_000, g, 1, MediaStatus::Stalled);
+        r.tick(11_000);
+        assert!(r.playback().hold.is_some(), "stall hold");
+        press_ready(&mut r, 11_000, g, false);
+        status(&mut r, 11_500, g, 1, ready());
+        assert!(r.playback().hold.is_none(), "{:?}", r.playback());
+    }
+
+    #[test]
+    fn the_same_ready_twice_tells_nobody() {
+        let (mut r, h, _) = starting_room();
+        press_ready(&mut r, 0, h, true);
+        assert!(press_ready(&mut r, 0, h, true).is_empty());
+    }
+
+    #[test]
+    fn the_check_survives_a_restart() {
+        let (r, _, _) = starting_room();
+        let restored = Room::restore(config(), r.persisted(1_000));
+        assert!(restored.state().ready_check);
+    }
+}

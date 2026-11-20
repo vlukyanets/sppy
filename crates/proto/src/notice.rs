@@ -43,6 +43,13 @@ pub enum NoticeAction {
         participant_id: ParticipantId,
         back_ms: u64,
     },
+    /// The actor pressed Ready (or took it back) for the current item.
+    ReadyChanged {
+        ready: bool,
+    },
+    ReadyCheckChanged {
+        on: bool,
+    },
     CanControlChanged {
         participant_id: ParticipantId,
         allowed: bool,

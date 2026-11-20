@@ -175,6 +175,10 @@ The host decides what the room does about latecomers (next to the control mode):
   to them and the others slow down or jump back, as in Syncplay. Someone buffering does not
   pull the room back; after `stall_hold_secs` the room pauses for them as usual.
 
+A new item starts as soon as everyone has loaded it. With **Start on Ready** (host) it also
+waits until everyone has pressed **I'm ready** in the yellow waiting line; the players say
+"Press Ready in sppy" and the participant list shows who is ready.
+
 ## Delivery modes
 
 - **Stream** — the player plays the file from the server over HTTP (Range requests).

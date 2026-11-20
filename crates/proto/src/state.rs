@@ -63,6 +63,9 @@ pub struct RoomState {
     pub control_mode: ControlMode,
     #[serde(default)]
     pub lag_policy: LagPolicy,
+    /// A new item starts only once everyone has also pressed Ready (host option).
+    #[serde(default)]
+    pub ready_check: bool,
     pub playlist: Vec<Item>,
     pub settings: RoomSettings,
 }
@@ -81,6 +84,9 @@ pub struct Participant {
     pub can_control: bool,
     pub connected: bool,
     pub status: MediaStatus,
+    /// Pressed Ready for the current item; matters with [`RoomState::ready_check`].
+    #[serde(default)]
+    pub ready: bool,
 }
 
 /// With [`LagPolicy::FollowSlowest`]: the room goes back to a participant this far behind.
