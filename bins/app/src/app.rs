@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use sppy_client_core::config::{ClientConfig, ClientPaths, SavedServer};
 use sppy_client_core::netaddr::{self, InviteHost, LocalIp};
-use sppy_player::mpv::{MpvConfig, MpvLauncher};
+use sppy_player::any::{AnyLauncher, PlayerSetup};
 use sppy_server::ServerHandle;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
@@ -71,7 +71,9 @@ pub struct SppyApp {
     pub rt: Runtime,
     pub handle: ClientHandle,
     /// Shared with the client core: changing it affects the next player launch.
-    pub launcher: MpvLauncher,
+    pub launcher: AnyLauncher,
+    /// What the launcher starts now; Save restarts the player when the settings differ.
+    pub player_setup: PlayerSetup,
     pub config: ClientConfig,
     pub paths: ClientPaths,
     pub ui: UiState,
@@ -88,7 +90,7 @@ impl SppyApp {
         cc: &eframe::CreationContext<'_>,
         rt: Runtime,
         handle: ClientHandle,
-        launcher: MpvLauncher,
+        launcher: AnyLauncher,
         config: ClientConfig,
         paths: ClientPaths,
         link: Option<String>,
@@ -151,6 +153,7 @@ impl SppyApp {
             rt,
             handle,
             launcher,
+            player_setup: config.player.setup(),
             config,
             paths,
             ui,
@@ -178,11 +181,8 @@ impl SppyApp {
 
     /// Apply the player settings and restart the player with them.
     pub fn restart_player(&mut self) {
-        self.launcher.set_config(MpvConfig {
-            path: self.config.player.path.clone(),
-            extra_args: self.config.player.extra_args.clone(),
-            headless: false,
-        });
+        self.player_setup = self.config.player.setup();
+        self.launcher.set_setup(self.player_setup.clone());
         self.ui.player_problem = None;
         self.send(UiCommand::RestartPlayer);
     }

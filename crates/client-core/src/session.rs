@@ -1056,7 +1056,9 @@ impl<L: PlayerLauncher> Session<L> {
             .as_ref()
             .map(|r| u64::from(r.settings.resume_buffer_secs) * 1000)
             .unwrap_or(10_000);
-        if self.media.local || self.media.cache_eof || self.media.cache_ms >= reserve_ms {
+        // A player that cannot tell its cache ahead (VLC) is trusted once it is not buffering.
+        let blind = self.player.as_ref().is_some_and(|p| !p.capabilities().cache_ahead);
+        if self.media.local || self.media.cache_eof || blind || self.media.cache_ms >= reserve_ms {
             let status = MediaStatus::Ready {
                 duration_ms: self.media.duration_ms,
                 title: self.media.title.clone(),
@@ -1081,10 +1083,10 @@ impl<L: PlayerLauncher> Session<L> {
                 self.controller = DriftController::new(self.config.advanced.clone());
                 self.apply_playback().await;
             }
-            Err(PlayerError::NotInstalled(path)) => {
+            Err(PlayerError::NotInstalled { player, path }) => {
                 self.snap.player_open = false;
                 self.emit(UiEvent::PlayerUnavailable(format!(
-                    "mpv not found ({path}): install mpv or set its path in Settings"
+                    "{player} not found ({path}): install {player} or set its path in Settings"
                 )));
             }
             Err(e) => {

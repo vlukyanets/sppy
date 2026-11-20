@@ -40,6 +40,18 @@ async fn ui_seek_moves_player() {
 }
 
 #[tokio::test]
+async fn a_player_that_cannot_report_its_cache_is_ready_once_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_server(dir.path(), test_config()).await;
+    // VLC cannot tell how much it has buffered ahead.
+    let h = host(&server, FakeConfig { cache_ahead: false, ..FakeConfig::default() }).await;
+    add_and_play(&h, &["u1"]).await;
+    eventually("fake playing", 5, || h.launcher.remote().is_some_and(|r| !r.paused())).await;
+    eventually("in sync", 5, || h.synced()).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn user_pause_in_player_propagates() {
     let dir = tempfile::tempdir().unwrap();
     let server = start_server(dir.path(), test_config()).await;

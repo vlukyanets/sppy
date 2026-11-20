@@ -18,6 +18,8 @@ pub struct FakeConfig {
     pub seek_delay_ms: u64,
     pub time_pos_interval_ms: u64,
     pub duration_ms: u64,
+    /// Whether the fake reports the cache ahead (as mpv does) or not (as VLC).
+    pub cache_ahead: bool,
 }
 
 impl Default for FakeConfig {
@@ -27,6 +29,7 @@ impl Default for FakeConfig {
             seek_delay_ms: 100,
             time_pos_interval_ms: 50,
             duration_ms: 600_000,
+            cache_ahead: true,
         }
     }
 }
@@ -171,7 +174,9 @@ impl FakePlayer {
                     duration_ms: Some(duration),
                     title: Some("fake".into()),
                 });
-                s.emit(PlayerEvent::CacheAhead { ms: duration, eof: true });
+                if s.cfg.cache_ahead {
+                    s.emit(PlayerEvent::CacheAhead { ms: duration, eof: true });
+                }
             }
             FakeCmd::Play => set_pause(&self.state, false),
             FakeCmd::Pause => set_pause(&self.state, true),
@@ -234,7 +239,12 @@ impl Drop for FakePlayer {
 
 impl Player for FakePlayer {
     fn capabilities(&self) -> Capabilities {
-        Capabilities { speed: true, sub_add: true, osd: true }
+        Capabilities {
+            speed: true,
+            sub_add: true,
+            osd: true,
+            cache_ahead: lock(&self.state).cfg.cache_ahead,
+        }
     }
 
     async fn load(&mut self, media: MediaSource, subtitles: Vec<MediaSource>) -> PlayerResult {
@@ -366,7 +376,10 @@ impl PlayerLauncher for FakeLauncher {
 
     async fn launch(&self) -> PlayerResult<FakePlayer> {
         if self.not_installed.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(PlayerError::NotInstalled("fake-player".into()));
+            return Err(PlayerError::NotInstalled {
+                player: "the fake player",
+                path: "fake-player".into(),
+            });
         }
         let (player, remote) = FakePlayer::new(self.cfg.clone());
         self.remotes.lock().expect("remotes").push(remote);

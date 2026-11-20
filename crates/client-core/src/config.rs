@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sppy_common::config::ServerConfig;
+use sppy_player::any::{PlayerKind, PlayerSetup};
 use sppy_sync::SyncParams;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -25,6 +26,32 @@ pub struct PlayerConfig {
     pub kind: String,
     pub path: PathBuf,
     pub extra_args: Vec<String>,
+}
+
+impl PlayerConfig {
+    /// The chosen player; a name this version does not know falls back to mpv.
+    pub fn kind(&self) -> PlayerKind {
+        PlayerKind::from_id(&self.kind).unwrap_or_default()
+    }
+
+    pub fn setup(&self) -> PlayerSetup {
+        PlayerSetup {
+            kind: self.kind(),
+            path: self.path.clone(),
+            extra_args: self.extra_args.clone(),
+        }
+    }
+
+    /// Pick another player: its own program, and none of the arguments meant for the
+    /// previous one.
+    pub fn switch_to(&mut self, kind: PlayerKind) {
+        if kind == self.kind() {
+            return;
+        }
+        self.kind = kind.id().into();
+        self.path = kind.default_path();
+        self.extra_args.clear();
+    }
 }
 
 impl Default for PlayerConfig {
@@ -302,6 +329,22 @@ mod tests {
             assert!(!text.contains(unwanted), "{unwanted} saved in:\n{text}");
         }
         assert_eq!(ClientConfig::load_or_default(&file).unwrap(), c);
+    }
+
+    #[test]
+    fn switching_the_player_resets_its_program_and_arguments() {
+        let mut p = PlayerConfig {
+            kind: "mpv".into(),
+            path: "/opt/mpv/mpv".into(),
+            extra_args: vec!["--volume=70".into()],
+        };
+        p.switch_to(PlayerKind::Mpv);
+        assert_eq!(p.path, PathBuf::from("/opt/mpv/mpv"));
+        p.switch_to(PlayerKind::Vlc);
+        assert_eq!(p, PlayerConfig { kind: "vlc".into(), path: "vlc".into(), extra_args: vec![] });
+        assert_eq!(p.setup().kind, PlayerKind::Vlc);
+        let unknown = PlayerConfig { kind: "mplayer".into(), ..PlayerConfig::default() };
+        assert_eq!(unknown.kind(), PlayerKind::Mpv);
     }
 
     #[test]

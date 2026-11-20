@@ -15,7 +15,7 @@ mod ui;
 use anyhow::Context;
 use sppy_client_core::api::spawn_client;
 use sppy_client_core::config::{ClientConfig, client_paths};
-use sppy_player::mpv::{MpvConfig, MpvLauncher};
+use sppy_player::any::AnyLauncher;
 
 fn main() -> anyhow::Result<()> {
     let paths = client_paths();
@@ -38,11 +38,7 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("tokio runtime")?;
-    let launcher = MpvLauncher::new(MpvConfig {
-        path: config.player.path.clone(),
-        extra_args: config.player.extra_args.clone(),
-        headless: false,
-    });
+    let launcher = AnyLauncher::new(config.player.setup());
     let handle = {
         let _enter = rt.enter();
         spawn_client(config.clone(), launcher.clone())

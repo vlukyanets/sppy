@@ -1,6 +1,9 @@
-//! Player abstraction and backends (mpv). The only crate that knows concrete players.
+//! Player abstraction and backends (mpv, VLC). The only crate that knows concrete players.
 
+pub mod any;
+mod languages;
 pub mod mpv;
+pub mod vlc;
 
 #[cfg(feature = "fake")]
 pub mod fake;
@@ -21,6 +24,9 @@ pub struct Capabilities {
     pub speed: bool,
     pub sub_add: bool,
     pub osd: bool,
+    /// The player reports how much is buffered ahead (`CacheAhead`). Without it a streamed
+    /// item counts as ready once it is open and not buffering.
+    pub cache_ahead: bool,
 }
 
 /// Raw events from the player. Classifying them as "ours" vs "user" happens in client-core.
@@ -56,8 +62,8 @@ pub enum PlayerError {
     #[error("cannot launch player: {0}")]
     Launch(String),
     /// The player program does not exist (not installed or wrong path).
-    #[error("player not found: {0}")]
-    NotInstalled(String),
+    #[error("{player} not found: {path}")]
+    NotInstalled { player: &'static str, path: String },
     #[error("player IPC error: {0}")]
     Ipc(String),
     #[error("player is gone")]

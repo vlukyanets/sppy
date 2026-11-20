@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
 use sppy_client_core::netaddr;
 use sppy_common::folders;
+use sppy_player::any::PlayerKind;
 use sppy_proto::{FolderAdding, MediaFolderProblem};
 
 use super::theme;
@@ -64,14 +65,33 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             let c = &mut app.config;
             theme::card(ui, "Player", None, |ui| {
                 form(ui, "player", |ui| {
-                    ui.label("mpv path");
+                    ui.label("Player");
+                    let mut kind = c.player.kind();
+                    egui::ComboBox::from_id_salt("player-kind").selected_text(kind.name()).show_ui(
+                        ui,
+                        |ui| {
+                            for k in PlayerKind::ALL {
+                                ui.selectable_value(&mut kind, k, k.name());
+                            }
+                        },
+                    );
+                    if kind != c.player.kind() {
+                        c.player.switch_to(kind);
+                        app.ui.extra_args.clear();
+                    }
+                    ui.end_row();
+                    ui.label(format!("{} path", kind.name()));
                     let mut path = c.player.path.display().to_string();
-                    if wide_edit(ui, &mut path, "mpv").changed() {
+                    if wide_edit(ui, &mut path, kind.id()).changed() {
                         c.player.path = path.into();
                     }
                     ui.end_row();
                     ui.label("Extra arguments");
-                    if wide_edit(ui, &mut app.ui.extra_args, "e.g. --volume=70").changed() {
+                    let hint = match kind {
+                        PlayerKind::Mpv => "e.g. --volume=70",
+                        PlayerKind::Vlc => "e.g. --no-sub-autodetect-file",
+                    };
+                    if wide_edit(ui, &mut app.ui.extra_args, hint).changed() {
                         c.player.extra_args =
                             app.ui.extra_args.split_whitespace().map(str::to_owned).collect();
                     }
@@ -95,8 +115,15 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                     if ui.button("Restart player").clicked() {
                         restart = true;
                     }
-                    theme::muted(ui, "Path and arguments apply when the player starts.");
+                    theme::muted(ui, "Save restarts the player when these change.");
                 });
+                if c.player.kind() == PlayerKind::Vlc {
+                    theme::muted(
+                        ui,
+                        "sppy puts its control module (sppy.lua) into VLC's Lua folder. VLC \
+                         opens web links with its own scripts, not yt-dlp.",
+                    );
+                }
                 if !c.trusted_sites.is_empty() {
                     ui.add_space(6.0);
                     theme::muted(ui, "Links to these sites play without asking (✕ to ask again):");
@@ -325,6 +352,9 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
             });
         });
     app.ui.settings_open = open;
+    if save && app.config.player.setup() != app.player_setup {
+        restart = true;
+    }
     if save || restart {
         app.save_config();
     }

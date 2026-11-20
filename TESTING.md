@@ -8,13 +8,23 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Tests that need mpv (`sppy-player` mpv tests) are skipped when `mpv` is not on `PATH`.
+Tests that need mpv (`sppy-player` mpv tests) are skipped when `mpv` is not on `PATH`;
+the VLC tests (`sppy-player --test vlc_player`, Unix only) likewise when `vlc` is not. They
+run VLC headless with its data and config in a temporary folder, so your own VLC settings
+and Lua folder are not touched.
 
 Sync quality with real players is measured by hand (it depends on the machine's load, so
 CI does not run it): two clients with headless mpv must stay within 80 ms of the room.
 
 ```sh
 cargo test -p sppy-client-core --test real_mpv -- --ignored --nocapture
+```
+
+The same for a room with one mpv and one VLC client (Unix): both must stay within 80 ms.
+VLC usually sits 40–50 ms behind (its start-up delay, inside the 80 ms dead band).
+
+```sh
+cargo test -p sppy-client-core --test real_vlc -- --ignored --nocapture
 ```
 
 ## Manual: two clients on one machine
@@ -79,6 +89,23 @@ Run each instance with its own home so they do not share config and cache:
 18. Look: rows light up under the pointer, the current item has an accent bar, row actions
     (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
     instead of icons anywhere; Settings opens centred with cards.
+
+## Manual: VLC
+
+Needs VLC 3 with its window (the automated tests only run it headless).
+
+1. ⚙ Settings → *Player* → **VLC**; the path becomes `vlc` and the extra arguments are
+   cleared. **Save** → the mpv window closes and a VLC window opens (no "continue
+   playback?" or privacy question). `sppy.lua` is in VLC's Lua folder (README).
+2. Two instances as above, A with mpv and B with VLC: add a library file, **Play**. Both
+   play; B's drift in the participants list stays small (under ~100 ms) after it settles.
+3. In VLC: pause, seek with the slider and the arrow keys, change the speed (`]`) → A
+   follows the pause and the seeks, the speed snaps back.
+4. Press VLC's **Stop** in the middle → VLC opens the item again where it was and catches up.
+5. Seek close to the end of an item → the room moves on to the next item in both players.
+6. Messages from sppy appear in VLC's video (top left).
+7. Windows: with VLC installed by its installer and the path left at `vlc`, sppy finds it.
+8. Close VLC's window → the app shows the player as closed, like with mpv.
 
 ## Manual: headless server over Tailscale
 
