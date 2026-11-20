@@ -94,7 +94,9 @@ Run each instance with its own home so they do not share config and cache:
 19. Settings: numbers (cache limit, port, advanced sync) are plain text fields; dragging
     over them changes nothing. `abc` or `5` in *Dead band* → red with the reason, Save is
     off. *Speed correction exit* `200` with the dead band at `100` → Save is off and names
-    the conflict. Close Settings and open again → the fields show the saved values.
+    the conflict. *Settle time* `20000` → "From 0 to 10000"; *Dead band* `3000` with a
+    *Seek threshold* of `20000` is accepted. Close Settings and open again → the fields
+    show the saved values.
 
 ## Manual: catching up
 

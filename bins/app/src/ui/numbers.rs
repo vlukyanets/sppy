@@ -48,9 +48,24 @@ pub fn percent_text(fraction: f64) -> String {
     format!("{}", (fraction * 1000.0).round() / 10.0)
 }
 
-/// What is wrong with thresholds that are each within their limits but not together.
+/// Beyond these, sync silently stops working: no corrections for that long after every
+/// seek or pause, drifts of minutes closed only by speed, or every seek overshooting.
+pub const MAX_SETTLE_MS: u64 = 10_000;
+pub const MAX_SEEK_THRESHOLD_MS: u64 = 30_000;
+pub const MAX_SEEK_LEAD_MS: u64 = 10_000;
+
+/// What is wrong with the thresholds, also when they came from `client.toml`.
 pub fn sync_problems(p: &SyncParams) -> Vec<&'static str> {
     let mut out = Vec::new();
+    if p.settle_ms > MAX_SETTLE_MS {
+        out.push("Settle time must be at most 10000 ms.");
+    }
+    if p.seek_threshold_ms > MAX_SEEK_THRESHOLD_MS {
+        out.push("Seek threshold must be at most 30000 ms.");
+    }
+    if p.max_seek_lead_ms > MAX_SEEK_LEAD_MS {
+        out.push("Max seek lead must be at most 10000 ms.");
+    }
     if p.speed_exit_ms >= p.dead_band_ms {
         out.push("Speed correction exit must be below the dead band.");
     }
@@ -113,5 +128,30 @@ mod tests {
         );
         let p = SyncParams { speed_exit_ms: 100, ..SyncParams::default() };
         assert_eq!(sync_problems(&p), ["Speed correction exit must be below the dead band."]);
+    }
+
+    #[test]
+    fn caps_that_keep_sync_working() {
+        let at_caps = SyncParams {
+            settle_ms: MAX_SETTLE_MS,
+            seek_threshold_ms: MAX_SEEK_THRESHOLD_MS,
+            max_seek_lead_ms: MAX_SEEK_LEAD_MS,
+            ..SyncParams::default()
+        };
+        assert!(sync_problems(&at_caps).is_empty());
+        let over = SyncParams {
+            settle_ms: MAX_SETTLE_MS + 1,
+            seek_threshold_ms: MAX_SEEK_THRESHOLD_MS + 1,
+            max_seek_lead_ms: MAX_SEEK_LEAD_MS + 1,
+            ..SyncParams::default()
+        };
+        assert_eq!(
+            sync_problems(&over),
+            [
+                "Settle time must be at most 10000 ms.",
+                "Seek threshold must be at most 30000 ms.",
+                "Max seek lead must be at most 10000 ms."
+            ]
+        );
     }
 }

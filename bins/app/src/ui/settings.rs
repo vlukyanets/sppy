@@ -82,6 +82,7 @@ fn ms_field(
     key: &'static str,
     value: &mut u64,
     min: u64,
+    max: Option<u64>,
 ) {
     number_field(
         ui,
@@ -89,7 +90,7 @@ fn ms_field(
         key,
         value,
         |v| v.to_string(),
-        |t| numbers::whole(t, "ms", min, None),
+        |t| numbers::whole(t, "ms", min, max),
         "ms",
     );
 }
@@ -439,23 +440,54 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                     let a = &mut c.advanced;
                     let drafts = &mut app.ui.number_drafts;
                     form(ui, "sync", |ui| {
-                        let rows: [(&str, &'static str, &mut u64, u64); 7] = [
-                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10),
-                            ("Speed correction exit", "speed_exit_ms", &mut a.speed_exit_ms, 0),
-                            ("Speed correction horizon", "horizon_ms", &mut a.horizon_ms, 1_000),
-                            ("Seek threshold", "seek_threshold_ms", &mut a.seek_threshold_ms, 100),
-                            ("Settle time", "settle_ms", &mut a.settle_ms, 0),
-                            ("Max seek lead", "max_seek_lead_ms", &mut a.max_seek_lead_ms, 0),
+                        let rows: [(&str, &'static str, &mut u64, u64, Option<u64>); 7] = [
+                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10, None),
+                            (
+                                "Speed correction exit",
+                                "speed_exit_ms",
+                                &mut a.speed_exit_ms,
+                                0,
+                                None,
+                            ),
+                            (
+                                "Speed correction horizon",
+                                "horizon_ms",
+                                &mut a.horizon_ms,
+                                1_000,
+                                None,
+                            ),
+                            (
+                                "Seek threshold",
+                                "seek_threshold_ms",
+                                &mut a.seek_threshold_ms,
+                                100,
+                                Some(numbers::MAX_SEEK_THRESHOLD_MS),
+                            ),
+                            (
+                                "Settle time",
+                                "settle_ms",
+                                &mut a.settle_ms,
+                                0,
+                                Some(numbers::MAX_SETTLE_MS),
+                            ),
+                            (
+                                "Max seek lead",
+                                "max_seek_lead_ms",
+                                &mut a.max_seek_lead_ms,
+                                0,
+                                Some(numbers::MAX_SEEK_LEAD_MS),
+                            ),
                             (
                                 "Re-seek threshold",
                                 "reseek_threshold_ms",
                                 &mut a.reseek_threshold_ms,
                                 50,
+                                None,
                             ),
                         ];
-                        for (label, key, value, min) in rows {
+                        for (label, key, value, min, max) in rows {
                             ui.label(label);
-                            ms_field(ui, drafts, key, value, min);
+                            ms_field(ui, drafts, key, value, min, max);
                             ui.end_row();
                         }
                         ui.label("Min speed correction");
