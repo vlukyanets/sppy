@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use sppy_client_core::api::{ClientHandle, ServerFolders, Snapshot, UiCommand};
+use sppy_client_core::config::CatchUp;
 use sppy_client_core::netaddr;
 use sppy_common::folders;
 use sppy_player::any::PlayerKind;
@@ -34,6 +35,31 @@ fn wide_edit(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response
             .margin(egui::Margin::symmetric(8, 4))
             .desired_width(360.0),
     )
+}
+
+fn catch_up_text(m: CatchUp) -> &'static str {
+    match m {
+        CatchUp::Speed => "Speed up or slow down",
+        CatchUp::Jumps => "Jump",
+        CatchUp::Off => "Leave my player alone",
+    }
+}
+
+fn catch_up_hint(m: CatchUp) -> &'static str {
+    match m {
+        CatchUp::Speed => {
+            "A few percent faster or slower until the player is back with the room; a jump \
+             only when it is far off."
+        }
+        CatchUp::Jumps => {
+            "The player jumps to the room when it is half a second off. For players that \
+             cannot change speed, or when a change of tempo would be heard."
+        }
+        CatchUp::Off => {
+            "sppy opens the items but does not play, pause or move your player, and what you \
+             do in it stays there."
+        }
+    }
 }
 
 fn pick_folder() -> Option<PathBuf> {
@@ -95,6 +121,17 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                         c.player.extra_args =
                             app.ui.extra_args.split_whitespace().map(str::to_owned).collect();
                     }
+                    ui.end_row();
+                    ui.label("Catching up");
+                    egui::ComboBox::from_id_salt("catch-up")
+                        .selected_text(catch_up_text(c.catch_up))
+                        .show_ui(ui, |ui| {
+                            for m in [CatchUp::Speed, CatchUp::Jumps, CatchUp::Off] {
+                                ui.selectable_value(&mut c.catch_up, m, catch_up_text(m));
+                            }
+                        })
+                        .response
+                        .on_hover_text(catch_up_hint(c.catch_up));
                     ui.end_row();
                     ui.label("Audio languages");
                     if wide_edit(ui, &mut app.ui.audio_languages, "e.g. ja, en (first one wins)")
@@ -347,7 +384,8 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                 }
                 theme::muted(
                     ui,
-                    "Folders and languages apply on Save; sync and hosting on the next start.",
+                    "Folders, languages and catching up apply on Save; advanced sync and \
+                     hosting on the next start.",
                 );
             });
         });
@@ -359,6 +397,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
         app.save_config();
     }
     if save {
+        app.send(UiCommand::SetCatchUp(app.config.catch_up));
         app.send(UiCommand::SetTrustedSites(app.config.trusted_sites.clone()));
         app.send(UiCommand::SetTrackLanguages(app.config.track_languages()));
     }

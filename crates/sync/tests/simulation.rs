@@ -1,6 +1,6 @@
 //! Closed-loop simulation: controller + a model player with latency, jitter, slow seeks and clock skew.
 
-use sppy_sync::{Correction, DriftController, Observed, SyncParams, Target};
+use sppy_sync::{CatchUp, Correction, DriftController, Observed, SyncParams, Target};
 
 const STEP_MS: u64 = 10;
 const TICK_MS: u64 = 250;
@@ -59,7 +59,12 @@ fn dead_band() -> f64 {
 }
 
 fn run(initial_drift_ms: f64) -> (f64, usize) {
+    run_with(initial_drift_ms, CatchUp::Speed)
+}
+
+fn run_with(initial_drift_ms: f64, catch_up: CatchUp) -> (f64, usize) {
     let mut ctl = DriftController::new(SyncParams::default());
+    ctl.set_catch_up(catch_up);
     let mut rng = Lcg(42);
     let start_target = 60_000.0;
     let mut m = Model {
@@ -120,4 +125,12 @@ fn recovers_from_3s_ahead() {
     let (worst, seeks) = run(3_000.0);
     assert!(worst <= dead_band(), "worst drift in the last 60 s: {worst}");
     assert!(seeks < 3, "seeks: {seeks}");
+}
+
+#[test]
+fn jumps_mode_recovers_with_a_few_seeks_and_stays_below_the_jump_threshold() {
+    let (worst, seeks) = run_with(-5_000.0, CatchUp::Jumps);
+    eprintln!("jumps -5000: worst={worst:.1} seeks={seeks}");
+    assert!(worst <= SyncParams::default().jump_threshold_ms as f64, "worst drift: {worst}");
+    assert!(seeks < 4, "seeks: {seeks}");
 }

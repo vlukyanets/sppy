@@ -21,6 +21,21 @@ pub struct SyncParams {
     pub max_seek_lead_ms: u64,
     /// After our own seek, a residual above this triggers another (compensated) seek.
     pub reseek_threshold_ms: u64,
+    /// In the jumps mode: seek once the drift is larger than this.
+    pub jump_threshold_ms: u64,
+}
+
+/// How a player that drifted away from the room is brought back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatchUp {
+    /// A few percent faster or slower until it is back; a seek for large drifts.
+    #[default]
+    Speed,
+    /// Only seeks, for players that cannot change speed or content where it is heard.
+    Jumps,
+    /// The player is left alone entirely.
+    Off,
 }
 
 impl Default for SyncParams {
@@ -35,6 +50,7 @@ impl Default for SyncParams {
             settle_ms: 1000,
             max_seek_lead_ms: 2000,
             reseek_threshold_ms: 300,
+            jump_threshold_ms: 500,
         }
     }
 }

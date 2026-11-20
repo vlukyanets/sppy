@@ -1,6 +1,6 @@
 //! Continuous drift correction: nothing / speed / seek (spec §6.3).
 
-use crate::SyncParams;
+use crate::{CatchUp, SyncParams};
 
 /// Where the room says the player should be.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +33,7 @@ const MAX_RESEEKS: u32 = 2;
 #[derive(Debug, Clone)]
 pub struct DriftController {
     p: SyncParams,
+    catch_up: CatchUp,
     settle_until: u64,
     correcting: bool,
     seek_issued: bool,
@@ -46,6 +47,7 @@ impl DriftController {
     pub fn new(p: SyncParams) -> Self {
         DriftController {
             p,
+            catch_up: CatchUp::Speed,
             settle_until: 0,
             correcting: false,
             seek_issued: false,
@@ -62,6 +64,14 @@ impl DriftController {
         self.correcting = false;
     }
 
+    pub fn set_catch_up(&mut self, catch_up: CatchUp) {
+        self.catch_up = catch_up;
+    }
+
+    pub fn catch_up(&self) -> CatchUp {
+        self.catch_up
+    }
+
     pub fn seek_lead_ms(&self) -> u64 {
         self.seek_lead_ms
     }
@@ -73,6 +83,9 @@ impl DriftController {
 
     pub fn update(&mut self, now_ms: u64, target: &Target, observed: &Observed) -> Vec<Correction> {
         let mut out = Vec::new();
+        if self.catch_up == CatchUp::Off {
+            return out;
+        }
         let drift = observed.position_ms as i64 - target.position_ms as i64;
         let abs = drift.unsigned_abs();
         let current_speed = self.commanded_speed.unwrap_or(observed.speed);
@@ -148,6 +161,20 @@ impl DriftController {
             if abs >= self.p.speed_exit_ms {
                 self.correcting = true;
             }
+        }
+
+        if self.catch_up == CatchUp::Jumps {
+            self.correcting = false;
+            if (current_speed - target.room_speed).abs() > SPEED_EPS {
+                self.set_speed(target.room_speed, &mut out);
+            }
+            if abs > self.p.jump_threshold_ms {
+                out.push(Correction::Seek { position_ms: target.position_ms + self.seek_lead_ms });
+                self.seek_issued = true;
+                self.reseeks = 0;
+                self.settle_until = now_ms + self.p.settle_ms;
+            }
+            return out;
         }
 
         let threshold = if self.correcting { self.p.speed_exit_ms } else { self.p.dead_band_ms };

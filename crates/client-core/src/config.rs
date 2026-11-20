@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sppy_common::config::ServerConfig;
 use sppy_player::any::{PlayerKind, PlayerSetup};
+pub use sppy_sync::CatchUp;
 use sppy_sync::SyncParams;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -87,6 +88,8 @@ pub struct ClientConfig {
     pub cache_limit_gb: u64,
     pub servers: Vec<SavedServer>,
     pub player: PlayerConfig,
+    /// How this player catches up with the room.
+    pub catch_up: CatchUp,
     pub advanced: SyncParams,
     /// Embedded server ("Become host"). Its `media` are "my media folders": local copies
     /// are found there, and they are shared while hosting.
@@ -119,6 +122,7 @@ impl Default for ClientConfig {
             cache_limit_gb: 20,
             servers: Vec::new(),
             player: PlayerConfig::default(),
+            catch_up: CatchUp::default(),
             advanced: SyncParams::default(),
             host: ServerConfig::default(),
             invite_host: None,

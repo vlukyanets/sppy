@@ -107,8 +107,17 @@ pub async fn host_with(server: &ServerHandle, fake: FakeConfig, cfg: ClientConfi
 }
 
 pub async fn guest(server: &ServerHandle, nick: &str, fake: FakeConfig) -> Peer {
+    guest_with(server, nick, fake, config(nick)).await
+}
+
+pub async fn guest_with(
+    server: &ServerHandle,
+    nick: &str,
+    fake: FakeConfig,
+    cfg: ClientConfig,
+) -> Peer {
     let launcher = FakeLauncher::new(fake);
-    let handle = spawn_client(config(nick), launcher.clone());
+    let handle = spawn_client(cfg, launcher.clone());
     let address = format!("sppy://{}/{}", server.local_addr, server.invite_token());
     handle.commands.send(UiCommand::Connect { address, nickname: nick.into() }).unwrap();
     let p = Peer { handle, launcher };

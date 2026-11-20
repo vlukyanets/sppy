@@ -8,4 +8,4 @@ mod params;
 pub use clock::ClockEstimator;
 pub use controller::{Correction, DriftController, Observed, Target};
 pub use echo::{Classified, EchoFilter, PendingOp, RawEvent, UserAction};
-pub use params::SyncParams;
+pub use params::{CatchUp, SyncParams};

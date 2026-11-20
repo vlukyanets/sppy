@@ -1,4 +1,4 @@
-use sppy_sync::{Correction, DriftController, Observed, SyncParams, Target};
+use sppy_sync::{CatchUp, Correction, DriftController, Observed, SyncParams, Target};
 
 fn target(pos: u64) -> Target {
     Target { position_ms: pos, playing: true, room_speed: 1.0 }
@@ -248,4 +248,47 @@ fn correction_has_a_minimum_rate() {
     assert!(s <= 1.0 - p.min_speed_correction + 1e-9, "{s}");
     let c = ctl().update(0, &target(10_000), &obs(9_900, 1.0));
     assert!(speed_of(&c).unwrap() >= 1.0 + p.min_speed_correction - 1e-9);
+}
+
+fn jumping() -> DriftController {
+    let mut c = ctl();
+    c.set_catch_up(CatchUp::Jumps);
+    c
+}
+
+#[test]
+fn jumps_mode_leaves_drift_below_the_jump_threshold_alone() {
+    let p = SyncParams::default();
+    // Beyond the dead band, where the speed mode would act.
+    let drift = p.dead_band_ms + 100;
+    assert!(drift < p.jump_threshold_ms);
+    assert!(jumping().update(0, &target(10_000), &obs(10_000 - drift, 1.0)).is_empty());
+}
+
+#[test]
+fn jumps_mode_seeks_instead_of_changing_speed() {
+    let p = SyncParams::default();
+    let behind = 10_000 - p.jump_threshold_ms - 200;
+    let out = jumping().update(0, &target(10_000), &obs(behind, 1.0));
+    assert_eq!(out, vec![Correction::Seek { position_ms: 10_000 }]);
+}
+
+#[test]
+fn jumps_mode_puts_back_the_room_speed() {
+    // A correction of the speed mode was running when the mode changed.
+    let mut c = ctl();
+    let out = c.update(0, &target(10_000), &obs(9_700, 1.0));
+    assert!(speed_of(&out).is_some_and(|s| s > 1.0));
+    c.set_catch_up(CatchUp::Jumps);
+    let out = c.update(250, &target(10_250), &obs(9_970, 1.03));
+    assert_eq!(speed_of(&out), Some(1.0));
+}
+
+#[test]
+fn off_mode_leaves_the_player_alone() {
+    let mut c = ctl();
+    c.set_catch_up(CatchUp::Off);
+    let paused = Observed { position_ms: 0, paused: true, speed: 1.0 };
+    assert!(c.update(0, &target(60_000), &paused).is_empty());
+    assert!(c.update(5_000, &target(60_000), &obs(1_000, 1.3)).is_empty());
 }

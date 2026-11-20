@@ -8,8 +8,8 @@ use sppy_proto::{
     ReqId, ServerMsg, Source,
 };
 use sppy_sync::{
-    Classified, Correction, DriftController, EchoFilter, Observed, PendingOp, RawEvent, Target,
-    UserAction,
+    CatchUp, Classified, Correction, DriftController, EchoFilter, Observed, PendingOp, RawEvent,
+    Target, UserAction,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::Instant;
@@ -376,6 +376,7 @@ impl<L: PlayerLauncher> Session<L> {
                     message: format!("Skipped the link to {}", q.site),
                 });
             }
+            UiCommand::SetCatchUp(catch_up) => self.config.catch_up = catch_up,
             UiCommand::SetTrackLanguages(languages) => {
                 self.config.audio_languages = languages.audio;
                 self.config.subtitle_languages = languages.subtitles;
@@ -1207,7 +1208,21 @@ impl<L: PlayerLauncher> Session<L> {
         }
     }
 
+    /// The configured way of catching up, as far as the player can do it.
+    fn catch_up(&self) -> CatchUp {
+        match self.config.catch_up {
+            CatchUp::Speed if self.player.as_ref().is_some_and(|p| !p.capabilities().speed) => {
+                CatchUp::Jumps
+            }
+            other => other,
+        }
+    }
+
     async fn classify(&mut self, ev: RawEvent) {
+        // A player left alone neither follows the room nor steers it.
+        if self.config.catch_up == CatchUp::Off {
+            return;
+        }
         let now = self.local_ms();
         let position_ms = self.observed_position(now);
         match self.echo.observe(now, ev, position_ms) {
@@ -1285,7 +1300,11 @@ impl<L: PlayerLauncher> Session<L> {
             paused: self.media.paused,
             speed: self.media.speed,
         };
-        if target.playing
+        let catch_up = self.catch_up();
+        self.controller.set_catch_up(catch_up);
+        // A player left alone is no measure for the room.
+        if catch_up != CatchUp::Off
+            && target.playing
             && now.saturating_sub(self.media.last_drift_report_ms) >= DRIFT_REPORT_MS
             && let (Some(item_id), Some(delivery)) = (self.media.item, self.media.delivery.clone())
         {

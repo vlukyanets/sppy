@@ -75,6 +75,8 @@ pub enum UiCommand {
     SetTrustedSites(Vec<String>),
     /// Preferred audio and subtitle languages; apply from the next item.
     SetTrackLanguages(sppy_player::TrackLanguages),
+    /// How the player catches up with the room (applies at once).
+    SetCatchUp(sppy_sync::CatchUp),
 }
 
 /// Someone else's link to a site not trusted yet is the current item: open it or not?

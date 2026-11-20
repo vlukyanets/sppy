@@ -20,6 +20,8 @@ pub struct FakeConfig {
     pub duration_ms: u64,
     /// Whether the fake reports the cache ahead (as mpv does) or not (as VLC).
     pub cache_ahead: bool,
+    /// Whether the fake can change its speed (a player without it only seeks).
+    pub speed_control: bool,
 }
 
 impl Default for FakeConfig {
@@ -30,6 +32,7 @@ impl Default for FakeConfig {
             time_pos_interval_ms: 50,
             duration_ms: 600_000,
             cache_ahead: true,
+            speed_control: true,
         }
     }
 }
@@ -239,11 +242,14 @@ impl Drop for FakePlayer {
 
 impl Player for FakePlayer {
     fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            speed: true,
-            sub_add: true,
-            osd: true,
-            cache_ahead: lock(&self.state).cfg.cache_ahead,
+        {
+            let cfg = &lock(&self.state).cfg;
+            Capabilities {
+                speed: cfg.speed_control,
+                sub_add: true,
+                osd: true,
+                cache_ahead: cfg.cache_ahead,
+            }
         }
     }
 

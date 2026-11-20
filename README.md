@@ -151,6 +151,18 @@ public_address = "sppys://watch.example.org:443"
 Links then look like `sppys://watch.example.org:443/<token>`. The port has to be written
 out: without one, sppy uses 8740.
 
+## Keeping in sync
+
+The server keeps the room's position; each player follows it. Drifts under 100 ms are left
+alone. ⚙ Settings → *Catching up* picks how your player gets back when it drifts further:
+
+- **Speed up or slow down** (default) — a few percent faster or slower until it is back
+  (the pitch stays); a jump only when it is more than 1.5 s off.
+- **Jump** — no change of tempo; the player jumps to the room once it is half a second off.
+  Players that cannot change speed always do this.
+- **Leave my player alone** — sppy opens the items but does not play, pause or move your
+  player, and what you do in it does not reach the room.
+
 ## Delivery modes
 
 - **Stream** — the player plays the file from the server over HTTP (Range requests).

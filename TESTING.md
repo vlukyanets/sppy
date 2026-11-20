@@ -92,6 +92,16 @@ Run each instance with its own home so they do not share config and cache:
     (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
     instead of icons anywhere; Settings opens centred with cards.
 
+## Manual: catching up
+
+1. Two instances, both playing. In B: ⚙ Settings → *Catching up* → **Jump**, Save. Freeze
+   B's player for a second without it noticing (Linux: `kill -STOP <pid>`, then
+   `kill -CONT <pid>`) → B jumps back to the room; no speed change appears in mpv's OSD.
+   With **Speed up or slow down** the same freeze is closed by a short speed change.
+2. B → **Leave my player alone**, Save. A seeks and pauses → B's player does not follow;
+   pausing or seeking in B's player does not affect A. B's drift is not shown in the list.
+3. B → **Speed up or slow down**, Save → B catches up with the room again.
+
 ## Manual: VLC
 
 Needs VLC 3 with its window (the automated tests only run it headless).
