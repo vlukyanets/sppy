@@ -16,17 +16,18 @@ fn strip_unit<'a>(text: &'a str, unit: &str) -> &'a str {
     text.strip_suffix(unit).unwrap_or(text).trim_end()
 }
 
-/// A whole number from `min` to `max`.
-pub fn whole(text: &str, unit: &str, min: u64, max: u64) -> Result<u64, String> {
+/// A whole number of at least `min`, and at most `max` when there is a limit.
+pub fn whole(text: &str, unit: &str, min: u64, max: Option<u64>) -> Result<u64, String> {
     let text = strip_unit(text, unit);
     if text.is_empty() {
         return Err("Enter a number".into());
     }
     let v: u64 = text.parse().map_err(|_| "Enter a whole number".to_owned())?;
-    if !(min..=max).contains(&v) {
-        return Err(format!("From {min} to {max}"));
+    match max {
+        Some(max) if !(min..=max).contains(&v) => Err(format!("From {min} to {max}")),
+        None if v < min => Err(format!("At least {min}")),
+        _ => Ok(v),
     }
-    Ok(v)
 }
 
 /// Percent from `min` to `max` (a dot or a comma for fractions) as a fraction: `8` → 0.08.
@@ -68,14 +69,17 @@ mod tests {
 
     #[test]
     fn whole_numbers_with_or_without_the_unit() {
-        assert_eq!(whole(" 100 ", "ms", 10, 5000), Ok(100));
-        assert_eq!(whole("100 ms", "ms", 10, 5000), Ok(100));
-        assert_eq!(whole("100ms", "ms", 10, 5000), Ok(100));
-        assert_eq!(whole("", "ms", 10, 5000), Err("Enter a number".into()));
-        assert_eq!(whole("1.5", "ms", 10, 5000), Err("Enter a whole number".into()));
-        assert_eq!(whole("-5", "ms", 10, 5000), Err("Enter a whole number".into()));
-        assert_eq!(whole("5", "ms", 10, 5000), Err("From 10 to 5000".into()));
-        assert_eq!(whole("5001", "ms", 10, 5000), Err("From 10 to 5000".into()));
+        assert_eq!(whole(" 100 ", "ms", 10, None), Ok(100));
+        assert_eq!(whole("100 ms", "ms", 10, None), Ok(100));
+        assert_eq!(whole("100ms", "ms", 10, None), Ok(100));
+        assert_eq!(whole("", "ms", 10, None), Err("Enter a number".into()));
+        assert_eq!(whole("1.5", "ms", 10, None), Err("Enter a whole number".into()));
+        assert_eq!(whole("-5", "ms", 10, None), Err("Enter a whole number".into()));
+        assert_eq!(whole("5", "ms", 10, None), Err("At least 10".into()));
+        assert_eq!(whole("999999999", "ms", 10, None), Ok(999_999_999));
+        assert_eq!(whole("0", "", 1, Some(65_535)), Err("From 1 to 65535".into()));
+        assert_eq!(whole("65536", "", 1, Some(65_535)), Err("From 1 to 65535".into()));
+        assert_eq!(whole("8080", "", 1, Some(65_535)), Ok(8080));
     }
 
     #[test]

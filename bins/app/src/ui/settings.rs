@@ -82,7 +82,6 @@ fn ms_field(
     key: &'static str,
     value: &mut u64,
     min: u64,
-    max: u64,
 ) {
     number_field(
         ui,
@@ -90,7 +89,7 @@ fn ms_field(
         key,
         value,
         |v| v.to_string(),
-        |t| numbers::whole(t, "ms", min, max),
+        |t| numbers::whole(t, "ms", min, None),
         "ms",
     );
 }
@@ -374,7 +373,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                         "cache_limit_gb",
                         &mut c.cache_limit_gb,
                         |v| v.to_string(),
-                        |t| numbers::whole(t, "GB", 1, 10_000),
+                        |t| numbers::whole(t, "GB", 1, None),
                         "GB",
                     );
                     ui.end_row();
@@ -421,7 +420,7 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                         "port",
                         &mut port,
                         |v| v.to_string(),
-                        |t| numbers::whole(t, "", 1, 65_535).map(|p| p as u16),
+                        |t| numbers::whole(t, "", 1, Some(65_535)).map(|p| p as u16),
                         "",
                     );
                     h.listen.set_port(port);
@@ -440,48 +439,23 @@ pub fn show(app: &mut SppyApp, ctx: &egui::Context, snap: &Snapshot) {
                     let a = &mut c.advanced;
                     let drafts = &mut app.ui.number_drafts;
                     form(ui, "sync", |ui| {
-                        let rows: [(&str, &'static str, &mut u64, u64, u64); 7] = [
-                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10, 5_000),
-                            (
-                                "Speed correction exit",
-                                "speed_exit_ms",
-                                &mut a.speed_exit_ms,
-                                0,
-                                5_000,
-                            ),
-                            (
-                                "Speed correction horizon",
-                                "horizon_ms",
-                                &mut a.horizon_ms,
-                                1_000,
-                                60_000,
-                            ),
-                            (
-                                "Seek threshold",
-                                "seek_threshold_ms",
-                                &mut a.seek_threshold_ms,
-                                100,
-                                60_000,
-                            ),
-                            ("Settle time", "settle_ms", &mut a.settle_ms, 0, 10_000),
-                            (
-                                "Max seek lead",
-                                "max_seek_lead_ms",
-                                &mut a.max_seek_lead_ms,
-                                0,
-                                10_000,
-                            ),
+                        let rows: [(&str, &'static str, &mut u64, u64); 7] = [
+                            ("Dead band", "dead_band_ms", &mut a.dead_band_ms, 10),
+                            ("Speed correction exit", "speed_exit_ms", &mut a.speed_exit_ms, 0),
+                            ("Speed correction horizon", "horizon_ms", &mut a.horizon_ms, 1_000),
+                            ("Seek threshold", "seek_threshold_ms", &mut a.seek_threshold_ms, 100),
+                            ("Settle time", "settle_ms", &mut a.settle_ms, 0),
+                            ("Max seek lead", "max_seek_lead_ms", &mut a.max_seek_lead_ms, 0),
                             (
                                 "Re-seek threshold",
                                 "reseek_threshold_ms",
                                 &mut a.reseek_threshold_ms,
                                 50,
-                                10_000,
                             ),
                         ];
-                        for (label, key, value, min, max) in rows {
+                        for (label, key, value, min) in rows {
                             ui.label(label);
-                            ms_field(ui, drafts, key, value, min, max);
+                            ms_field(ui, drafts, key, value, min);
                             ui.end_row();
                         }
                         ui.label("Min speed correction");
