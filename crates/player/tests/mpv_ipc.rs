@@ -42,10 +42,19 @@ async fn real_mpv_events_and_close() {
     let _child = spawn_mpv(&path);
     let (ipc, mut events) = MpvIpc::connect(&path, Duration::from_secs(5)).await.expect("connect");
     ipc.command(vec![json!("observe_property"), json!(1), json!("pause")]).await.unwrap();
-    let ev = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
-    assert!(
-        matches!(ev, MpvIncoming::Event { ref event, ref name, .. } if event == "property-change" && name.as_deref() == Some("pause"))
-    );
+    // mpv sends events of its own (e.g. `idle`, started with --idle), so the property
+    // change need not come first.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let ev = events.recv().await.expect("mpv alive");
+            if matches!(ev, MpvIncoming::Event { ref event, ref name, .. } if event == "property-change" && name.as_deref() == Some("pause"))
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("pause property change");
     let _ = ipc.command(vec![json!("quit")]).await;
     // After mpv quits, the event stream ends and commands fail.
     tokio::time::timeout(Duration::from_secs(5), async { while events.recv().await.is_some() {} })
