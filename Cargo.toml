@@ -41,8 +41,19 @@ base64 = "0.23"
 blake3 = "1.8"
 
 # gui
-eframe = "0.37"
+# The renderer is picked per platform in bins/app (glow or wgpu); the rest are
+# eframe's default features (its `winit/default` comes through `winit` below).
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "links",
+    "system_fonts",
+    "wayland",
+    "x11",
+] }
 egui = "0.37"
+winit = "0.30"
 egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
 rfd = "0.18"
 

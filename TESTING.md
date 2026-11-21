@@ -101,7 +101,9 @@ Run each instance with its own home so they do not share config and cache:
     x-scheme-handler/sppy` prints `sppy-link.desktop` while registered.)
 18. Look: rows light up under the pointer, the current item has an accent bar, row actions
     (My file…, ▲▼, ✕) appear on hover; transport buttons sit on one line; no squares
-    instead of icons anywhere; Settings opens centred with cards.
+    instead of icons anywhere; Settings opens centred with cards. Linux: the same under
+   Wayland and X11 (`env -u WAYLAND_DISPLAY sppy`); `RUST_LOG=eframe=debug` says
+   "Using the glow renderer".
 19. Settings: numbers (cache limit, port, advanced sync) are plain text fields; dragging
     over them changes nothing. `abc` or `5` in *Dead band* → red with the reason, Save is
     off. *Speed correction exit* `200` with the dead band at `100` → Save is off and names

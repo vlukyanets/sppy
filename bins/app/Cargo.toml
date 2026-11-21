@@ -15,13 +15,24 @@ sppy-server.workspace = true
 sppy-player.workspace = true
 sppy-client-core.workspace = true
 tokio.workspace = true
-eframe.workspace = true
 egui.workspace = true
 rfd.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+
+# OpenGL is everywhere on Linux and glow is about 5 MiB smaller than wgpu. On Windows
+# OpenGL drivers are the weak spot (virtual machines, old Intel), so wgpu draws with
+# DirectX 12 there.
+[target.'cfg(windows)'.dependencies]
+eframe = { workspace = true, features = ["wgpu"] }
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = { workspace = true, features = ["glow"] }
+# Not used directly: brings back winit's default features that eframe's defaults turn
+# on (window decorations on Wayland, libwayland loaded at run time).
+winit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

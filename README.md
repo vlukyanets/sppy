@@ -14,7 +14,8 @@ in one room may use different players. Everyone in a room needs the same version
 
 Download the archive for your system from
 [Releases](https://github.com/vlukyanets/sppy/releases) and unpack it: `sppy` is the app,
-`sppy-server` the optional headless server.
+`sppy-server` the optional headless server. The app draws its window with OpenGL on Linux
+(any Mesa or vendor driver) and Direct3D 12 or Vulkan on Windows; nothing else is needed for it.
 
 To check a download: `sha256sum -c SHA256SUMS --ignore-missing` (Linux) or
 `Get-FileHash sppy-*.zip` in PowerShell, compared with the line in `SHA256SUMS`.

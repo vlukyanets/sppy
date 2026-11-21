@@ -359,6 +359,14 @@ impl SppyApp {
             }
         }
     }
+
+    /// Leaves the room and stops the embedded server when the window closes.
+    fn shut_down(&mut self) {
+        let _ = self.handle.commands.send(UiCommand::Disconnect);
+        if let Some(host) = self.host.take() {
+            self.rt.block_on(host.shutdown());
+        }
+    }
 }
 
 impl eframe::App for SppyApp {
@@ -372,11 +380,15 @@ impl eframe::App for SppyApp {
         }
     }
 
+    // eframe hands glow users the GL context here; sppy draws nothing of its own.
+    #[cfg(not(windows))]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.shut_down();
+    }
+
+    #[cfg(windows)]
     fn on_exit(&mut self) {
-        let _ = self.handle.commands.send(UiCommand::Disconnect);
-        if let Some(host) = self.host.take() {
-            self.rt.block_on(host.shutdown());
-        }
+        self.shut_down();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
