@@ -72,3 +72,15 @@ anyhow = "1"
 # tests
 insta = { version = "1.49", features = ["json"] }
 tempfile = "3.27"
+
+# Release archives: `cargo build --profile dist`. Smaller over the last few percent of
+# speed, except blake3: a library scan hashes 2 MiB of every media file.
+[profile.dist]
+inherits = "release"
+strip = true
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+
+[profile.dist.package.blake3]
+opt-level = 3

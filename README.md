@@ -44,7 +44,8 @@ over a local connection only. Compared with mpv:
   soon as VLC has opened it.
 - At the end of an item VLC's window goes black instead of keeping the last frame.
 
-To build from source instead: `cargo build --release -p sppy-app -p sppy-server-cli`.
+To build from source instead: `cargo build --profile dist -p sppy-app -p sppy-server-cli`
+(the programs land in `target/dist`; `--release` builds faster but bigger).
 
 ## Quick start: host from the app
 
