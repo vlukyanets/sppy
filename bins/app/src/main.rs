@@ -47,7 +47,8 @@ fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("sppy")
             .with_inner_size([980.0, 640.0])
-            .with_min_inner_size([640.0, 420.0]),
+            .with_min_inner_size([640.0, 420.0])
+            .with_icon(window_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -60,4 +61,20 @@ fn main() -> anyhow::Result<()> {
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The title bar and taskbar icon. Wayland ignores it and takes the icon of the
+/// installed `sppy.desktop` (the app id is "sppy").
+fn window_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/sppy-256.png"))
+        .expect("the icon is a valid PNG built into the binary")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_window_icon_decodes() {
+        let icon = super::window_icon();
+        assert_eq!((icon.width, icon.height), (256, 256));
+    }
 }

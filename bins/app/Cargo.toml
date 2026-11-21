@@ -34,6 +34,11 @@ eframe = { workspace = true, features = ["glow"] }
 # on (window decorations on Wayland, libwayland loaded at run time).
 winit.workspace = true
 
+# The build script runs on the build machine; Windows builds are native, so this is
+# the Windows target as well.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 egui_kittest.workspace = true
