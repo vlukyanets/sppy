@@ -4307,7 +4307,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-app"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "eframe",
@@ -4330,7 +4330,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-client-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4356,7 +4356,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-common"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "serde",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-player"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -4380,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-proto"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "insta",
  "serde",
@@ -4389,7 +4389,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-server"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -4414,7 +4414,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-server-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4428,7 +4428,7 @@ dependencies = [
 
 [[package]]
 name = "sppy-sync"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
 ]
