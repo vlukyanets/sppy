@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's Windows installer (WiX 5). Per user: no administrator prompt; installs into
+  %LOCALAPPDATA%\Programs\sppy with a Start menu shortcut, and a newer MSI replaces an
+  older install. The release workflow builds it:
+    wix build bins/app/installer/sppy.wxs -arch x64 -d Version=X.Y.Z -d RepoDir=<repo> -d BinDir=<repo>\target\dist
+  The UpgradeCode ties all versions together: never change it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="sppy" Manufacturer="sppy" Version="$(Version)" Scope="perUser"
+           UpgradeCode="66964df3-d4c0-4c4a-a321-a77892016211">
+    <SummaryInformation Description="sppy: watch videos in sync with friends" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of sppy is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="sppy.ico" SourceFile="$(RepoDir)\assets\sppy.ico" />
+    <Property Id="ARPPRODUCTICON" Value="sppy.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/vlukyanets/sppy" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Per-user folders: Windows Installer wants a registry key path and RemoveFolder
+         entries for them (ICE38, ICE64). -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="sppy">
+          <Component Id="App" Guid="e3a250e6-dbc6-4c64-b35f-bf8339908a6c">
+            <File Id="SppyExe" Source="$(BinDir)\sppy.exe" />
+            <File Id="LicenseMit" Source="$(RepoDir)\LICENSE-MIT" />
+            <File Id="LicenseApache" Source="$(RepoDir)\LICENSE-APACHE" />
+            <RegistryValue Root="HKCU" Key="Software\sppy\Installer" Name="App"
+                           Type="integer" Value="1" KeyPath="yes" />
+            <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+            <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu" Guid="a25f3685-fa1b-46c8-82c2-8b2147860b9c">
+        <Shortcut Id="StartMenuShortcut" Name="sppy" Description="Watch videos in sync with friends"
+                  Target="[#SppyExe]" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\sppy\Installer" Name="StartMenu"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>

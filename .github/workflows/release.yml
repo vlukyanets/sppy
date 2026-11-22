@@ -68,12 +68,69 @@ jobs:
             Copy-Item "target/dist/$bin.exe", README.md, LICENSE-MIT, LICENSE-APACHE $name
             Compress-Archive -Path $name -DestinationPath "$name.zip"
           }
+      - name: Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # WiX 5: WiX 6 and later ask projects for a maintenance fee.
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE) { throw "could not install WiX" }
+          $wix = "$env:USERPROFILE\.dotnet\tools\wix.exe"
+          $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'sppy-app').version
+          $ref = $env:GITHUB_REF_NAME -replace '/', '-'
+          $msi = "sppy-$ref-${{ matrix.platform }}.msi"
+          & $wix build bins/app/installer/sppy.wxs -arch x64 -d "Version=$version" `
+            -d "RepoDir=$PWD" -d "BinDir=$PWD\target\dist" -o $msi
+          if ($LASTEXITCODE) { throw "wix build failed" }
+          "MSI=$msi" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # Install, look, uninstall: the MSI is only ever built here, so this is its test.
+      - name: Check the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Run-Msiexec($arguments) {
+            $p = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+            if ($p.ExitCode -ne 0) {
+              Get-Content msiexec.log -Tail 40 -ErrorAction SilentlyContinue
+              throw "msiexec $arguments exited with $($p.ExitCode)"
+            }
+          }
+          # Installed products with the UpgradeCode of bins/app/installer/sppy.wxs.
+          function Installed-Count {
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $codes = $installer.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null,
+              $installer, @('{66964DF3-D4C0-4C4A-A321-A77892016211}'))
+            @($codes).Count
+          }
+          $exe = "$env:LOCALAPPDATA\Programs\sppy\sppy.exe"
+          $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\sppy.lnk"
+          # An older version first, so that the real MSI has to upgrade it. It is built
+          # outside the workspace so that it is not uploaded with the release files.
+          $old = "$env:RUNNER_TEMP\sppy-0.0.1.msi"
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" build bins/app/installer/sppy.wxs -arch x64 `
+            -d "Version=0.0.1" -d "RepoDir=$PWD" -d "BinDir=$PWD\target\dist" -o $old
+          if ($LASTEXITCODE) { throw "wix build failed" }
+          Run-Msiexec "/i `"$old`" /qn /l*v msiexec.log"
+          if ((Installed-Count) -ne 1) { throw "the old version is not installed" }
+          Run-Msiexec "/i `"$env:MSI`" /qn /l*v msiexec.log"
+          if ((Installed-Count) -ne 1) { throw "$(Installed-Count) sppy installs after upgrading" }
+          if (-not (Test-Path $exe)) { throw "sppy.exe was not installed" }
+          if (-not (Test-Path $lnk)) { throw "no Start menu shortcut" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          if ($target -ne $exe) { throw "the shortcut points to $target" }
+          Run-Msiexec "/x `"$env:MSI`" /qn /l*v msiexec.log"
+          if ((Installed-Count) -ne 0) { throw "sppy is still installed" }
+          if (Test-Path $exe) { throw "sppy.exe is still there after uninstalling" }
+          if (Test-Path $lnk) { throw "the Start menu shortcut is still there" }
+          if (Test-Path (Split-Path $exe)) { throw "the install folder is still there" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.platform }}
           path: |
             *.tar.gz
             *.zip
+            sppy-*.msi
           if-no-files-found: error
 
   release:

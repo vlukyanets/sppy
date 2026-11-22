@@ -146,6 +146,18 @@ Run each instance with its own home so they do not share config and cache:
    current item keeps playing. Restart the server → the order, the marks and the repeat
    mode are still there.
 
+## Manual: Windows installer
+
+The release workflow installs, upgrades and removes the MSI itself; what it cannot see:
+
+1. Double-click `sppy-…-windows-x86_64.msi` → a progress bar, no administrator prompt.
+   **sppy** is in the Start menu with its icon and starts; *Settings → Apps* lists sppy with
+   the icon.
+2. With sppy running, install a newer MSI → Windows asks to close sppy; afterwards one sppy
+   in *Apps*, the newer version in the status line. Settings and the cache are kept.
+3. Uninstall from *Apps* → the Start menu entry and `%LOCALAPPDATA%\Programs\sppy` are gone;
+   `%APPDATA%\sppy` (settings) stays.
+
 ## Manual: VLC
 
 Needs VLC 3 with its window (the automated tests only run it headless).

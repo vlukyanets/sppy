@@ -12,8 +12,10 @@ in one room may use different players. Everyone in a room needs the same version
 
 ## Install
 
-Download the app for your system from [Releases](https://github.com/vlukyanets/sppy/releases)
-(`sppy-…-linux-x86_64.tar.gz` or `sppy-…-windows-x86_64.zip`) and unpack it. The app can
+Download the app for your system from [Releases](https://github.com/vlukyanets/sppy/releases):
+on Windows the installer `sppy-…-windows-x86_64.msi` (installs for your account only, no
+administrator rights; adds sppy to the Start menu and updates an older install), or the
+`.zip` to unpack anywhere; on Linux `sppy-…-linux-x86_64.tar.gz`. The app can
 host a room by itself; the headless server for an always-on machine is a separate
 download, `sppy-server-…`. The app draws its window with OpenGL on Linux
 (any Mesa or vendor driver) and Direct3D 12 or Vulkan on Windows; nothing else is needed for it.
