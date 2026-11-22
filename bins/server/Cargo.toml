@@ -16,3 +16,8 @@ clap.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# The build script runs on the build machine; Windows builds are native, so this is
+# the Windows target as well.
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
