@@ -12,13 +12,14 @@ in one room may use different players. Everyone in a room needs the same version
 
 ## Install
 
-Download the archive for your system from
-[Releases](https://github.com/vlukyanets/sppy/releases) and unpack it: `sppy` is the app,
-`sppy-server` the optional headless server. The app draws its window with OpenGL on Linux
+Download the app for your system from [Releases](https://github.com/vlukyanets/sppy/releases)
+(`sppy-…-linux-x86_64.tar.gz` or `sppy-…-windows-x86_64.zip`) and unpack it. The app can
+host a room by itself; the headless server for an always-on machine is a separate
+download, `sppy-server-…`. The app draws its window with OpenGL on Linux
 (any Mesa or vendor driver) and Direct3D 12 or Vulkan on Windows; nothing else is needed for it.
 
 To check a download: `sha256sum -c SHA256SUMS --ignore-missing` (Linux) or
-`Get-FileHash sppy-*.zip` in PowerShell, compared with the line in `SHA256SUMS`.
+`Get-FileHash <archive>.zip` in PowerShell, compared with the line in `SHA256SUMS`.
 
 sppy drives a separately installed player: [mpv](https://mpv.io) (the default) or
 [VLC](https://www.videolan.org/vlc/) 3, chosen in ⚙ Settings → *Player*.

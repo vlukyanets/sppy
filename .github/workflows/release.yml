@@ -44,29 +44,37 @@ jobs:
           key: ${{ matrix.os }}
       - name: Build
         run: cargo build --profile dist --locked -p sppy-app -p sppy-server-cli
+      # The app and the headless server are separate downloads: most people want only
+      # the app (it hosts by itself), a server machine wants only the server.
       - name: Package (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          name="sppy-${GITHUB_REF_NAME//\//-}-${{ matrix.platform }}"
-          mkdir "$name"
-          cp target/dist/sppy target/dist/sppy-server README.md LICENSE-MIT LICENSE-APACHE "$name/"
-          tar czf "$name.tar.gz" "$name"
-          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          ref="${GITHUB_REF_NAME//\//-}"
+          for bin in sppy sppy-server; do
+            name="$bin-$ref-${{ matrix.platform }}"
+            mkdir "$name"
+            cp "target/dist/$bin" README.md LICENSE-MIT LICENSE-APACHE "$name/"
+            tar czf "$name.tar.gz" "$name"
+          done
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ref = $env:GITHUB_REF_NAME -replace '/', '-'
-          $name = "sppy-$ref-${{ matrix.platform }}"
-          New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/dist/sppy.exe, target/dist/sppy-server.exe, README.md, LICENSE-MIT, LICENSE-APACHE $name
-          Compress-Archive -Path $name -DestinationPath "$name.zip"
-          "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          foreach ($bin in "sppy", "sppy-server") {
+            $name = "$bin-$ref-${{ matrix.platform }}"
+            New-Item -ItemType Directory $name | Out-Null
+            Copy-Item "target/dist/$bin.exe", README.md, LICENSE-MIT, LICENSE-APACHE $name
+            Compress-Archive -Path $name -DestinationPath "$name.zip"
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.platform }}
-          path: ${{ env.ASSET }}
+          path: |
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
 
   release:
     needs: build
