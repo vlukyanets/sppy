@@ -223,14 +223,15 @@ The thresholds are under *Advanced sync settings*. Values in `client.toml` that 
 their limits or contradict each other are set back to their defaults on start, and the app
 says which.
 
-The host decides what the room does about latecomers (next to the control mode):
+The host decides what the room does about latecomers (*Room* → *Latecomers*, under the
+participants):
 
-- **Latecomers catch up alone** (default) — the room plays on.
-- **Wait for latecomers** — when someone falls more than a second behind, the room goes back
+- **Catch up alone** (default) — the room plays on.
+- **Room waits** — when someone falls more than a second behind, the room goes back
   to them and the others slow down or jump back, as in Syncplay. Someone buffering does not
   pull the room back; after `stall_hold_secs` the room pauses for them as usual.
 
-A new item starts as soon as everyone has loaded it. With **Start on Ready** (host) it also
+A new item starts as soon as everyone has loaded it. With *Start* **on Ready** (host, under *Room*) it also
 waits until everyone has ticked **I'm ready** in the yellow waiting line; the players say
 "Press Ready in sppy" and the participant list shows who is ready (the green *loaded* next
 to a name only means that the player has opened the file).

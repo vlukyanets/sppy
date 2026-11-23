@@ -239,6 +239,25 @@ pub fn card<R>(
 }
 
 /// Secondary text that wraps.
+/// A checkbox that stands out: a bigger box with a border, for ticks that matter on their
+/// own (Ready). The plain box has no border and nearly vanishes on a card.
+pub fn tick(
+    ui: &mut egui::Ui,
+    checked: &mut bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let s = ui.spacing_mut();
+        s.icon_width = 18.0;
+        s.icon_width_inner = 11.0;
+        let w = &mut ui.visuals_mut().widgets;
+        w.inactive.bg_stroke = Stroke::new(1.0, MUTED);
+        w.hovered.bg_stroke = Stroke::new(1.0, TEXT);
+        ui.checkbox(checked, text)
+    })
+    .inner
+}
+
 pub fn muted(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(egui::RichText::new(text).color(MUTED)).wrap());
 }

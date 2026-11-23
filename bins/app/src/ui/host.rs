@@ -4,10 +4,11 @@ use sppy_client_core::api::{Snapshot, UiCommand};
 use sppy_proto::{ControlMode, LagPolicy, RoomState};
 
 use crate::app::SppyApp;
+use crate::ui::theme;
 
 pub fn mode_text(m: ControlMode) -> &'static str {
     match m {
-        ControlMode::Everyone => "Everyone can control",
+        ControlMode::Everyone => "Everyone",
         ControlMode::HostOnly => "Only the host",
         ControlMode::Selected => "Selected participants",
     }
@@ -15,8 +16,8 @@ pub fn mode_text(m: ControlMode) -> &'static str {
 
 pub fn lag_text(p: LagPolicy) -> &'static str {
     match p {
-        LagPolicy::CatchUpAlone => "Latecomers catch up alone",
-        LagPolicy::FollowSlowest => "Wait for latecomers",
+        LagPolicy::CatchUpAlone => "Catch up alone",
+        LagPolicy::FollowSlowest => "Room waits",
     }
 }
 
@@ -39,54 +40,83 @@ pub fn show(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
     }
 }
 
-/// The host's controls for `room`; returns the commands the clicks asked for.
+/// A label in the left column; never wrapped, the right column gets what is left.
+fn row_label(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).color(theme::MUTED)).extend());
+}
+
+/// The host's controls for `room`, as a small labelled form; returns the commands the clicks
+/// asked for.
 fn host_controls(ui: &mut egui::Ui, room: &RoomState) -> Vec<UiCommand> {
     let mut sent = Vec::new();
-    ui.horizontal_wrapped(|ui| {
-        let mut mode = room.control_mode;
-        egui::ComboBox::from_id_salt("control-mode")
-            .selected_text(mode_text(mode))
-            .show_ui(ui, |ui| {
-                for m in [ControlMode::Everyone, ControlMode::HostOnly, ControlMode::Selected] {
-                    ui.selectable_value(&mut mode, m, mode_text(m));
+    theme::section(ui, "Room");
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::Grid::new("host-controls").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                let mut mode = room.control_mode;
+                row_label(ui, "Control");
+                egui::ComboBox::from_id_salt("control-mode")
+                    .width(ui.available_width())
+                    .truncate()
+                    .selected_text(mode_text(mode))
+                    .show_ui(ui, |ui| {
+                        for m in
+                            [ControlMode::Everyone, ControlMode::HostOnly, ControlMode::Selected]
+                        {
+                            ui.selectable_value(&mut mode, m, mode_text(m));
+                        }
+                    })
+                    .response
+                    .on_hover_text("Who may play, pause, seek and change the playlist");
+                if mode != room.control_mode {
+                    sent.push(UiCommand::SetControlMode(mode));
                 }
-            })
-            .response
-            .on_hover_text("Who may play, pause, seek and change the playlist");
-        if mode != room.control_mode {
-            sent.push(UiCommand::SetControlMode(mode));
-        }
-        let mut policy = room.lag_policy;
-        egui::ComboBox::from_id_salt("lag-policy")
-            .selected_text(lag_text(policy))
-            .show_ui(ui, |ui| {
-                for p in [LagPolicy::CatchUpAlone, LagPolicy::FollowSlowest] {
-                    ui.selectable_value(&mut policy, p, lag_text(p)).on_hover_text(lag_hint(p));
+                ui.end_row();
+
+                let mut policy = room.lag_policy;
+                row_label(ui, "Latecomers");
+                egui::ComboBox::from_id_salt("lag-policy")
+                    .width(ui.available_width())
+                    .truncate()
+                    .selected_text(lag_text(policy))
+                    .show_ui(ui, |ui| {
+                        for p in [LagPolicy::CatchUpAlone, LagPolicy::FollowSlowest] {
+                            ui.selectable_value(&mut policy, p, lag_text(p))
+                                .on_hover_text(lag_hint(p));
+                        }
+                    })
+                    .response
+                    .on_hover_text(lag_hint(room.lag_policy));
+                if policy != room.lag_policy {
+                    sent.push(UiCommand::SetLagPolicy(policy));
                 }
-            })
-            .response
-            .on_hover_text(lag_hint(room.lag_policy));
-        if policy != room.lag_policy {
-            sent.push(UiCommand::SetLagPolicy(policy));
-        }
-        let mut check = room.ready_check;
-        if ui
-            .checkbox(&mut check, "Start on Ready")
-            .on_hover_text(
-                "A new item starts once everyone has loaded it and pressed Ready, not as soon \
-                 as it has loaded.",
-            )
-            .changed()
-        {
-            sent.push(UiCommand::SetReadyCheck(check));
-        }
-        if ui.button("Rotate invite").on_hover_text("Old invite links stop working").clicked() {
-            sent.push(UiCommand::RotateInvite);
-        }
-    });
-    if room.control_mode == ControlMode::Selected {
-        ui.weak("Grant control with ⋯ next to a participant.");
-    }
+                ui.end_row();
+
+                let mut check = room.ready_check;
+                row_label(ui, "Start");
+                if theme::tick(ui, &mut check, "on Ready")
+                    .on_hover_text(
+                        "A new item starts once everyone has loaded it and ticked I'm ready, \
+                         not as soon as it has loaded.",
+                    )
+                    .changed()
+                {
+                    sent.push(UiCommand::SetReadyCheck(check));
+                }
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            if ui.button("Rotate invite").on_hover_text("Old invite links stop working").clicked() {
+                sent.push(UiCommand::RotateInvite);
+            }
+            if room.control_mode == ControlMode::Selected {
+                theme::muted(ui, "Grant control with ⋯ next to a participant.");
+            }
+        });
     sent
 }
 
@@ -102,6 +132,8 @@ mod tests {
 
     /// The content width of the participants panel at its smallest (240 px minus margins).
     const NARROW: f32 = 212.0;
+    /// The content width of the participants panel at its default size (300 px).
+    const DEFAULT: f32 = 272.0;
     /// The margin the harness puts around the UI on every side.
     const HARNESS_MARGIN: f32 = 8.0;
 
@@ -118,11 +150,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn host_controls_fit_a_narrow_panel() {
+    /// The controls in a panel whose content is `width` wide.
+    fn controls(width: f32) -> Harness<'static, Vec<UiCommand>> {
         let room = room();
         let mut h =
-            Harness::builder().with_size([NARROW + 2.0 * HARNESS_MARGIN, 160.0]).build_ui_state(
+            Harness::builder().with_size([width + 2.0 * HARNESS_MARGIN, 200.0]).build_ui_state(
                 move |ui, sent: &mut Vec<UiCommand>| {
                     theme::apply(ui.ctx());
                     sent.extend(host_controls(ui, &room));
@@ -130,15 +162,34 @@ mod tests {
                 Vec::new(),
             );
         h.run();
-        let mut controls: Vec<_> = h.get_all_by_role(Role::ComboBox).map(|n| n.rect()).collect();
-        assert_eq!(controls.len(), 2, "control mode and lag policy");
-        controls.push(h.get_by_role_and_label(Role::CheckBox, "Start on Ready").rect());
-        controls.push(h.get_by_role_and_label(Role::Button, "Rotate invite").rect());
-        for rect in controls {
+        h
+    }
+
+    /// Both lists start at the same x (a column, not a jumble), and nothing sticks out of a
+    /// panel `width` wide.
+    fn assert_tidy(width: f32) {
+        let h = controls(width);
+        let combos: Vec<_> = h.get_all_by_role(Role::ComboBox).map(|n| n.rect()).collect();
+        assert_eq!(combos.len(), 2, "control mode and lag policy");
+        assert_eq!(combos[0].left(), combos[1].left(), "the lists form a column");
+        let mut all = combos;
+        all.push(h.get_by_role_and_label(Role::CheckBox, "on Ready").rect());
+        all.push(h.get_by_role_and_label(Role::Button, "Rotate invite").rect());
+        for rect in all {
             assert!(
-                rect.right() <= HARNESS_MARGIN + NARROW,
-                "{rect:?} sticks out of a {NARROW} px panel"
+                rect.right() <= HARNESS_MARGIN + width,
+                "{rect:?} sticks out of a {width} px panel"
             );
         }
+    }
+
+    #[test]
+    fn host_controls_fit_a_narrow_panel() {
+        assert_tidy(NARROW);
+    }
+
+    #[test]
+    fn host_controls_line_up_at_the_default_width() {
+        assert_tidy(DEFAULT);
     }
 }

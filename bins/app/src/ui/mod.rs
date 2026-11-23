@@ -60,16 +60,9 @@ fn ready_button(
     }
     let mut ready = me.ready;
     let text = egui::RichText::new("I'm ready").strong();
-    let changed = ui
-        .scope(|ui| {
-            // Bigger than the other ticks: this one is what the room is waiting for.
-            ui.spacing_mut().icon_width = 20.0;
-            ui.spacing_mut().icon_width_inner = 12.0;
-            ui.checkbox(&mut ready, text)
-                .on_hover_text("The item starts once everyone has ticked it")
-                .changed()
-        })
-        .inner;
+    let changed = theme::tick(ui, &mut ready, text)
+        .on_hover_text("The item starts once everyone has ticked it")
+        .changed();
     changed.then_some(ready)
 }
 

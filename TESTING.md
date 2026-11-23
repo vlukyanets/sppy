@@ -120,10 +120,10 @@ Run each instance with its own home so they do not share config and cache:
 2. B → **Leave my player alone**, Save. A seeks and pauses → B's player does not follow;
    pausing or seeking in B's player does not affect A. B's drift is not shown in the list.
 3. B → **Speed up or slow down**, Save → B catches up with the room again.
-4. A (host) → **Wait for latecomers**. Freeze B's player for 2 s → A's player jumps back
+4. A (host) → *Latecomers* **Room waits**. Freeze B's player for 2 s → A's player jumps back
    about 2 s with "Went back 2.0 s for B" on its OSD; B does not jump. Back to
-   **Latecomers catch up alone** → the same freeze makes B catch up and A plays on.
-5. A (host) ticks **Start on Ready**, then selects another item. Both players load it and
+   **Catch up alone** → the same freeze makes B catch up and A plays on.
+5. A (host) ticks *Start* **on Ready** under *Room*, then selects another item. Both players load it and
    show "Now playing: … Press Ready in sppy"; the list shows both as "loaded" and "not
    ready", the waiting line names both as "not ready" and has an **I'm ready** tick. A
    ticks it → A's OSD stays, B's shows "A is ready", the list shows A as ready; B ticks it →
