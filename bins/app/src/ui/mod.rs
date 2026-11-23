@@ -46,7 +46,8 @@ pub fn status_line(app: &mut SppyApp, ui: &mut egui::Ui, _snap: &Snapshot) {
 
 /// Things that need attention: the player could not start, a link to an unknown site,
 /// the room is waiting, the host has no media folders.
-/// "I'm ready" / "Not ready" while a new item waits for everyone's Ready; what was pressed.
+/// The "I'm ready" tick while a new item waits for everyone's Ready; the new value when
+/// it was clicked.
 fn ready_button(
     ui: &mut egui::Ui,
     room: &sppy_proto::RoomState,
@@ -57,9 +58,19 @@ fn ready_button(
     if !room.ready_check || hold.reason != sppy_proto::HoldReason::ItemStart {
         return None;
     }
-    let button =
-        if me.ready { egui::Button::new("Not ready") } else { theme::primary("I'm ready") };
-    ui.add(button).clicked().then_some(!me.ready)
+    let mut ready = me.ready;
+    let text = egui::RichText::new("I'm ready").strong();
+    let changed = ui
+        .scope(|ui| {
+            // Bigger than the other ticks: this one is what the room is waiting for.
+            ui.spacing_mut().icon_width = 20.0;
+            ui.spacing_mut().icon_width_inner = 12.0;
+            ui.checkbox(&mut ready, text)
+                .on_hover_text("The item starts once everyone has ticked it")
+                .changed()
+        })
+        .inner;
+    changed.then_some(ready)
 }
 
 pub fn banners(app: &mut SppyApp, ui: &mut egui::Ui, snap: &Snapshot) {
@@ -179,22 +190,23 @@ mod tests {
     }
 
     #[test]
-    fn ready_is_pressed_and_taken_back() {
+    fn ready_is_ticked_and_taken_back() {
         let mut h = waiting(true, HoldReason::ItemStart, false);
-        h.get_by_role_and_label(Role::Button, "I'm ready").click();
+        h.get_by_role_and_label(Role::CheckBox, "I'm ready").click();
         h.run();
         assert_eq!(h.state(), &[true]);
         let mut h = waiting(true, HoldReason::ItemStart, true);
-        h.get_by_role_and_label(Role::Button, "Not ready").click();
+        h.snapshot("ready_ticked");
+        h.get_by_role_and_label(Role::CheckBox, "I'm ready").click();
         h.run();
         assert_eq!(h.state(), &[false]);
     }
 
     #[test]
-    fn no_ready_button_without_the_check_or_for_a_stall() {
+    fn no_ready_tick_without_the_check_or_for_a_stall() {
         for (check, reason) in [(false, HoldReason::ItemStart), (true, HoldReason::Stalled)] {
             let h = waiting(check, reason, false);
-            assert_eq!(h.query_all_by_role(Role::Button).count(), 0, "{check} {reason:?}");
+            assert_eq!(h.query_all_by_role(Role::CheckBox).count(), 0, "{check} {reason:?}");
         }
     }
 

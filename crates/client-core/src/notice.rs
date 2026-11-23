@@ -65,6 +65,9 @@ pub fn waiting_line(
     me: Option<ParticipantId>,
 ) -> String {
     use sppy_proto::{Delivery, HoldReason, MediaStatus};
+    if hold.waiting_for.is_empty() {
+        return "Waiting for a player to open the item".into();
+    }
     let wants_ready = room.ready_check && hold.reason == HoldReason::ItemStart;
     let line = |pid: &ParticipantId| {
         let name = if Some(*pid) == me { "you".to_owned() } else { nickname(room, *pid) };
@@ -303,6 +306,14 @@ mod tests {
         };
         let line = waiting_line(&hold, &r, &Default::default(), Some(ParticipantId(2)));
         assert_eq!(line, "Waiting for: alice (not ready)");
+    }
+
+    /// Nobody's player was open when the item started: the room waits for the first one.
+    #[test]
+    fn an_empty_wait_says_what_it_waits_for() {
+        let hold = Hold { reason: HoldReason::ItemStart, waiting_for: vec![] };
+        let line = waiting_line(&hold, &room(), &Default::default(), Some(ParticipantId(2)));
+        assert_eq!(line, "Waiting for a player to open the item");
     }
 
     fn room() -> RoomState {

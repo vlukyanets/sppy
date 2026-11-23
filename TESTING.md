@@ -130,10 +130,15 @@ Run each instance with its own home so they do not share config and cache:
    about 2 s with "Went back 2.0 s for B" on its OSD; B does not jump. Back to
    **Latecomers catch up alone** → the same freeze makes B catch up and A plays on.
 5. A (host) ticks **Start on Ready**, then selects another item. Both players load it and
-   show "Now playing: … Press Ready in sppy"; the waiting line names both as "not ready"
-   and has **I'm ready**. A presses it → A's OSD stays, B's shows "A is ready", the list
-   shows A as ready; B presses it → playback starts. **Not ready** takes it back.
-   Unticked → the next item starts as soon as both have loaded it.
+   show "Now playing: … Press Ready in sppy"; the list shows both as "loaded" and "not
+   ready", the waiting line names both as "not ready" and has an **I'm ready** tick. A
+   ticks it → A's OSD stays, B's shows "A is ready", the list shows A as ready; B ticks it →
+   playback starts. Unticking it before that takes it back.
+   With **Start on Ready** unticked, the next item starts as soon as both have loaded it.
+6. With **Start on Ready** on, A and B close their players and A selects another item: the
+   waiting line says "Waiting for a player to open the item". A opens the player → the line
+   names A, and the item starts only after A's player has loaded it and A has ticked
+   **I'm ready**.
 
 ## Manual: playlist
 

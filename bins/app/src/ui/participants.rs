@@ -11,7 +11,7 @@ pub fn status_text(s: &MediaStatus) -> (&'static str, egui::Color32, Option<&str
     let gray = egui::Color32::GRAY;
     match s {
         MediaStatus::Loading => ("loading", gray, None),
-        MediaStatus::Ready { .. } => ("ready", GREEN, None),
+        MediaStatus::Ready { .. } => ("loaded", GREEN, None),
         MediaStatus::Stalled => ("buffering", YELLOW, None),
         MediaStatus::Failed { message } => ("failed", RED, Some(message.as_str())),
         MediaStatus::PlayerClosed => ("player closed", RED, None),
@@ -170,6 +170,14 @@ mod tests {
         let failed = MediaStatus::Failed { message: "mpv could not open the media".into() };
         assert_eq!(status_text(&failed), ("failed", RED, Some("mpv could not open the media")));
         assert_eq!(status_text(&MediaStatus::Loading).2, None);
+    }
+
+    /// "ready" is what Start on Ready asks for; a loaded file is "loaded", so the two pills
+    /// next to a name cannot be mistaken for each other.
+    #[test]
+    fn a_loaded_file_is_not_called_ready() {
+        let loaded = MediaStatus::Ready { duration_ms: None, title: None };
+        assert_eq!(status_text(&loaded), ("loaded", GREEN, None));
     }
 
     #[test]

@@ -231,8 +231,9 @@ The host decides what the room does about latecomers (next to the control mode):
   pull the room back; after `stall_hold_secs` the room pauses for them as usual.
 
 A new item starts as soon as everyone has loaded it. With **Start on Ready** (host) it also
-waits until everyone has pressed **I'm ready** in the yellow waiting line; the players say
-"Press Ready in sppy" and the participant list shows who is ready.
+waits until everyone has ticked **I'm ready** in the yellow waiting line; the players say
+"Press Ready in sppy" and the participant list shows who is ready (the green *loaded* next
+to a name only means that the player has opened the file).
 
 ## Delivery modes
 
