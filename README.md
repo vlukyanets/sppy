@@ -8,30 +8,73 @@ player (mpv or VLC) that sppy keeps in sync. Media comes from the server's libra
 own disk, or from any URL the player can open.
 
 Status: early development. Works with mpv and VLC 3 on Linux and Windows; participants
-in one room may use different players. Everyone in a room needs the same version of sppy.
+in one room may use different players. Everyone in a room needs a version of sppy with the
+same protocol; the app tells you when they differ.
 
 ## Install
 
-Download the app for your system from [Releases](https://github.com/vlukyanets/sppy/releases):
-on Windows the installer `sppy-…-windows-x86_64.msi` (installs for your account only, no
-administrator rights; adds sppy to the Start menu and updates an older install), or the
-`.zip` to unpack anywhere; on Linux `sppy-…-linux-x86_64.tar.gz`. The app can
-host a room by itself; the headless server for an always-on machine is a separate
-download, `sppy-server-…`. The app draws its window with OpenGL on Linux
-(any Mesa or vendor driver) and Direct3D 12 or Vulkan on Windows; nothing else is needed for it.
+sppy needs three things on every participant's computer: the sppy app, a video player
+that sppy drives (mpv or VLC), and yt-dlp if you want to watch links from YouTube and
+other sites.
+
+### 1. The app
+
+**Windows.** From [Releases](https://github.com/vlukyanets/sppy/releases) download
+`sppy-…-windows-x86_64.msi` and run it. It installs for your account only, needs no
+administrator rights, adds sppy to the Start menu and updates an older install; remove
+sppy in *Settings → Apps*. Or take `sppy-…-windows-x86_64.zip` and unpack it anywhere.
+
+**Linux.** On Arch Linux and its derivatives sppy is in the AUR: `paru -S sppy` (or any
+other AUR helper). Elsewhere download `sppy-…-linux-x86_64.tar.gz` from
+[Releases](https://github.com/vlukyanets/sppy/releases), unpack it and run `sppy`.
+
+The window is drawn with OpenGL on Linux (any Mesa or vendor driver) and with Direct3D 12
+or Vulkan on Windows; nothing else is needed for it. The app can host a room by itself:
+the server is needed only for an always-on machine (see [Headless server](#headless-server)).
 
 To check a download: `sha256sum -c SHA256SUMS --ignore-missing` (Linux) or
-`Get-FileHash <archive>.zip` in PowerShell, compared with the line in `SHA256SUMS`.
+`Get-FileHash <file>` in PowerShell, compared with the line in `SHA256SUMS`.
 
-sppy drives a separately installed player: [mpv](https://mpv.io) (the default) or
-[VLC](https://www.videolan.org/vlc/) 3, chosen in ⚙ Settings → *Player*.
+### 2. A player
 
-- mpv on Windows: `winget install mpv` (or download mpv and set its path in Settings).
-- VLC on Windows: the regular installer; sppy finds it in `Program Files`.
-- Linux: install `mpv` or `vlc` from your distribution.
+sppy does not play video itself: it starts a player and keeps it in sync. Choose one in
+⚙ Settings → *Player*. Participants in one room may use different players.
 
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) is needed for web links in the playlist (YouTube and
-other sites), with either player.
+| | Windows | Linux |
+|---|---|---|
+| [mpv](https://mpv.io) (default) | `winget install mpv` | `mpv` from your distribution |
+| [VLC](https://www.videolan.org/vlc/) 3 | the regular installer | `vlc` from your distribution |
+
+sppy looks for `mpv` in `PATH` and for VLC also in `Program Files`. If yours is somewhere
+else, enter the full path to `mpv.exe` / `vlc.exe` (or `mpv` / `vlc`) in Settings → *Player*.
+
+### 3. yt-dlp, for links from YouTube and other sites
+
+Files from the library and from your own disk play without it. A link to a page on a
+video site (YouTube, Vimeo, Twitch and others) needs [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+whichever player you use: it finds the video behind the page.
+
+- **Windows:** `winget install yt-dlp.yt-dlp`, then **restart sppy**: programs started
+  before the install do not see it yet. mpv also finds `yt-dlp.exe` put next to `mpv.exe`.
+- **Arch Linux:** `sudo pacman -S yt-dlp` (it brings the JavaScript runtime that YouTube
+  needs along with it).
+- **Other Linux:** yt-dlp from your distribution, if it is recent; otherwise the
+  standalone build from its releases page, somewhere in `PATH`.
+
+Video sites change often, and an old yt-dlp stops working with them: keep it updated
+(`winget upgrade yt-dlp.yt-dlp`, or your package manager). For YouTube, yt-dlp also needs a
+JavaScript runtime; if it says so in its error, install [Deno](https://deno.com)
+(`winget install DenoLand.Deno` on Windows).
+
+### 4. Check it
+
+Run sppy, click **Become host**, add a YouTube link to the playlist and press **Play**. The
+player window opens and the video starts. If not:
+
+- *mpv not found* (or *VLC not found*): install the player, or enter its path in
+  ⚙ Settings → *Player*.
+- *The player could not open the media* on a link: yt-dlp is missing or too old. Run
+  `yt-dlp <the link>` in a terminal to see why.
 
 ### VLC
 
@@ -47,8 +90,10 @@ over a local connection only. Compared with mpv:
   soon as VLC has opened it.
 - At the end of an item VLC's window goes black instead of keeping the last frame.
 
-To build from source instead: `cargo build --profile dist -p sppy-app -p sppy-server-cli`
-(the programs land in `target/dist`; `--release` builds faster but bigger).
+### Build from source
+
+`cargo build --profile dist -p sppy-app -p sppy-server-cli` builds both programs into
+`target/dist` (`--release` builds faster but bigger).
 
 ## Quick start: host from the app
 
