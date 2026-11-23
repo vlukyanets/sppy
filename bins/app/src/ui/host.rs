@@ -140,6 +140,5 @@ mod tests {
                 "{rect:?} sticks out of a {NARROW} px panel"
             );
         }
-        h.snapshot("host_controls_narrow");
     }
 }

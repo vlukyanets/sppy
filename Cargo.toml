@@ -54,7 +54,7 @@ eframe = { version = "0.37", default-features = false, features = [
 ] }
 egui = "0.37"
 winit = "0.30"
-egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
+egui_kittest = "0.37"
 rfd = "0.18"
 winresource = "0.1.34"
 

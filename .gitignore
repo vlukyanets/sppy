@@ -1,5 +1,1 @@
 /target
-# What a failed UI snapshot test leaves next to the stored image.
-*.new.png
-*.diff.png
-*.old.png

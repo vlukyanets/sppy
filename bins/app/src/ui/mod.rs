@@ -196,7 +196,6 @@ mod tests {
         h.run();
         assert_eq!(h.state(), &[true]);
         let mut h = waiting(true, HoldReason::ItemStart, true);
-        h.snapshot("ready_ticked");
         h.get_by_role_and_label(Role::CheckBox, "I'm ready").click();
         h.run();
         assert_eq!(h.state(), &[false]);

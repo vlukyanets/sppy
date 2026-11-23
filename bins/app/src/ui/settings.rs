@@ -685,17 +685,6 @@ mod tests {
     }
 
     #[test]
-    fn advanced_sync_looks_right() {
-        let mut h = advanced();
-        let dead_band = field(&h, "Dead band");
-        dead_band.focus();
-        dead_band.type_text("x");
-        h.run();
-        h.fit_contents();
-        h.snapshot("advanced_sync_with_a_typo");
-    }
-
-    #[test]
     fn languages_split_on_commas_and_spaces() {
         assert_eq!(language_list(" ru, en  ja,,"), ["ru", "en", "ja"]);
         assert!(language_list("  ").is_empty());

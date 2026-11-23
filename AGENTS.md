@@ -88,7 +88,8 @@ Ask before changing any of these, and before other choices that are hard to reve
 - Pure logic (ranking, parsing, formatting, state machines) goes into functions that
   can be unit-tested without a UI, network or player.
 - UI parts get `egui_kittest` tests: find widgets by role and label (every input needs
-  an accessible name: `labelled_by`), and a snapshot to look at the result.
+  an accessible name: `labelled_by`). Check layout by asserting on widget rects (e.g. that
+  nothing sticks out at the narrowest panel), not with stored screenshots.
 - Keep scope tight: do what was asked, mention other problems found instead of
   silently fixing them in the same commit.
 - Verify before claiming: run the checks, look at real output (logs, files on disk,

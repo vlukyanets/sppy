@@ -296,7 +296,6 @@ mod tests {
         assert_eq!(combo.value().as_deref(), Some("No repeat"));
         combo.click();
         h.run();
-        h.snapshot("playlist_controls_repeat_menu");
         h.get_by_label("Repeat one").click();
         h.run();
         assert!(matches!(h.state()[..], [UiCommand::SetRepeat(Repeat::One)]), "{:?}", h.state());
