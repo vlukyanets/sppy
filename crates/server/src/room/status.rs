@@ -28,10 +28,12 @@ impl Room {
         if self.playback.item_id != Some(item_id) {
             return Vec::new();
         }
+        let was_active = self.is_active(pid);
         let Some(m) = self.member_mut(pid) else {
             return Vec::new();
         };
         m.info.status = status.clone();
+        let joined_the_start = !was_active && self.is_active(pid) && self.join_item_start(pid);
         match status {
             MediaStatus::Stalled => {
                 self.stalled_since.entry(pid).or_insert(now_ms);
@@ -69,8 +71,26 @@ impl Room {
             return effects;
         }
         let mut effects = vec![self.broadcast_room()];
+        if joined_the_start {
+            effects.push(self.broadcast_playback());
+        }
         effects.extend(self.reevaluate_hold(now_ms));
         effects
+    }
+
+    /// A player that opens while the room waits for the start of an item is waited for as
+    /// well: without this an empty waiting list (nobody's player was open) would let the
+    /// item start before that player has loaded it. Whether `pid` was added.
+    fn join_item_start(&mut self, pid: ParticipantId) -> bool {
+        match &mut self.playback.hold {
+            Some(hold)
+                if hold.reason == HoldReason::ItemStart && !hold.waiting_for.contains(&pid) =>
+            {
+                hold.waiting_for.push(pid);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Pressed Ready, or took it back. Only the start of an item waits for it (with the

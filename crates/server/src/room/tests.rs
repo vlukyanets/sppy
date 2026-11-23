@@ -1688,6 +1688,26 @@ mod ready_check {
         assert!(r.playback().is_playing(), "{:?}", r.playback());
     }
 
+    /// A player closed when the item started is not waited for; once it opens, its owner is
+    /// part of the start like everyone else, instead of the room starting without the file.
+    #[test]
+    fn a_player_opened_during_the_start_is_waited_for() {
+        let mut r = room();
+        let h = host(&mut r);
+        ready_check(&mut r, h, true);
+        r.test_set_status(h, MediaStatus::PlayerClosed);
+        add(&mut r, 0, h, vec![Source::Url { url: "https://a".into() }], None);
+        r.command(0, h, ClientMsg::Play { req_id: 1, position_ms: None });
+        assert_eq!(r.playback().hold.as_ref().unwrap().waiting_for, vec![]);
+
+        let effects = status(&mut r, 10, h, 1, MediaStatus::Loading);
+        assert_eq!(last_playback(&effects).hold.unwrap().waiting_for, vec![h], "announced");
+        status(&mut r, 20, h, 1, ready());
+        assert!(r.playback().hold.is_some(), "loaded, but Ready not pressed");
+        press_ready(&mut r, 30, h, true);
+        assert!(r.playback().is_playing(), "{:?}", r.playback());
+    }
+
     #[test]
     fn pressing_ready_before_the_file_loaded_still_waits_for_the_file() {
         let (mut r, h, g) = starting_room();
